@@ -42,11 +42,17 @@ generated=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 failed_file="$work/failed"
 
 # 下载一个产物（带重试），返回落盘路径。
+#
+# 这些安装包动辄几百 MB，所以要防「连接活着但不再传数据」的假死：--speed-limit /
+# --speed-time 让 curl 在速率掉下去时限时放弃、交给外层重试，而不是把发布卡到
+# job 超时。
 fetch() { # url dest
 	local url="$1" dest="$2"
 	local i
 	for i in 1 2 3 4 5; do
-		if curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 -o "$dest.part" "$url"; then
+		if curl -fsSL --retry 3 --retry-all-errors \
+			--connect-timeout 20 --speed-limit 20480 --speed-time 60 \
+			-o "$dest.part" "$url"; then
 			mv "$dest.part" "$dest"
 			return 0
 		fi
