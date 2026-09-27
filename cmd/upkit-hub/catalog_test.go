@@ -186,8 +186,11 @@ func TestLiveCatalogSources(t *testing.T) {
 		t.Skip("设置 UPKIT_HUB_LIVE=1 才跑联网用例")
 	}
 	for _, spec := range catalog {
-		// GitHub API 在部分网络环境不可达，联网用例只覆盖索引站源。
-		if _, ok := spec.src.(ucBinaries); !ok {
+		// GitHub API 在部分网络环境不可达，联网用例跳过 githubReleases；
+		// 其余上游都必须真的查得出「版本 + 带摘要的产物」。
+		switch spec.src.(type) {
+		case ucBinaries, softwareHub, vscodeUpdate:
+		default:
 			continue
 		}
 		rels, err := spec.src.versions(context.Background(), testConfig(), spec, 2)

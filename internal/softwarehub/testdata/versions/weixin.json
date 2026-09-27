@@ -1,0 +1,170 @@
+{
+  "softwareId": "weixin",
+  "updatedAt": "2026-09-27T09:55:31Z",
+  "platforms": [
+    {
+      "platform": "Android",
+      "version": "4.1.15",
+      "releaseDate": "2026-09-15",
+      "officialUrl": "https://weixin.qq.com/updates",
+      "packages": [
+        {
+          "architecture": "arm64",
+          "links": [
+            {
+              "type": "direct",
+              "label": "微信 4.1.15 Android arm64 安装包",
+              "url": "https://dldir1v6.qq.com/weixin/android/weixin8078android3180_0x28004e32_arm64.apk"
+            }
+          ]
+        },
+        {
+          "architecture": "x86",
+          "links": [
+            {
+              "type": "direct",
+              "label": "微信 4.1.15 Android x86 安装包",
+              "url": "https://dldir1v6.qq.com/weixin/android/weixin8042android2460.apk"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "platform": "HarmonyOS",
+      "version": "4.1.15",
+      "releaseDate": "2026-09-15",
+      "officialUrl": "https://weixin.qq.com/updates",
+      "packages": [
+        {
+          "architecture": "universal",
+          "links": [
+            {
+              "type": "store",
+              "label": "华为应用市场",
+              "url": "https://appgallery.huawei.com/app/detail?id=com.tencent.wechat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "platform": "Linux",
+      "version": "4.1.15",
+      "releaseDate": "2026-09-15",
+      "officialUrl": "https://weixin.qq.com/updates",
+      "packages": [
+        {
+          "architecture": "x64",
+          "links": [
+            {
+              "type": "webpage",
+              "label": "Linux 版微信",
+              "url": "https://linux.weixin.qq.com/"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "platform": "Web",
+      "version": "4.1.15",
+      "releaseDate": "2026-09-15",
+      "officialUrl": "https://weixin.qq.com/updates",
+      "packages": [
+        {
+          "architecture": "通用",
+          "links": [
+            {
+              "type": "webpage",
+              "label": "网页版微信",
+              "url": "https://wx.qq.com"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "platform": "Windows",
+      "version": "4.1.15",
+      "releaseDate": "2026-09-15",
+      "officialUrl": "https://weixin.qq.com/updates",
+      "packages": [
+        {
+          "architecture": "x64",
+          "links": [
+            {
+              "type": "direct",
+              "label": "微信 4.1.15 安装包 (exe)",
+              "url": "https://dldir1v6.qq.com/weixin/Universal/Windows/WeChatWin_4.1.15.exe"
+            }
+          ]
+        },
+        {
+          "architecture": "x86",
+          "links": [
+            {
+              "type": "direct",
+              "label": "微信 4.1.15 安装包 x86 (exe)",
+              "url": "https://dldir1v6.qq.com/weixin/Windows/WeChatSetup_x86.exe"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "platform": "Windows (Store)",
+      "version": "4.1.15",
+      "releaseDate": "2026-09-15",
+      "officialUrl": "https://weixin.qq.com/updates",
+      "packages": [
+        {
+          "architecture": "x64",
+          "links": [
+            {
+              "type": "store",
+              "label": "Microsoft Store",
+              "url": "https://www.microsoft.com/store/apps/9nblggh4slx7"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "platform": "iOS / iPadOS",
+      "version": "4.1.15",
+      "releaseDate": "2026-09-15",
+      "officialUrl": "https://weixin.qq.com/updates",
+      "packages": [
+        {
+          "architecture": "universal",
+          "links": [
+            {
+              "type": "store",
+              "label": "App Store",
+              "url": "https://apps.apple.com/cn/app/id1618175312"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "platform": "macOS",
+      "version": "4.1.15",
+      "releaseDate": "2026-09-15",
+      "officialUrl": "https://weixin.qq.com/updates",
+      "packages": [
+        {
+          "architecture": "universal",
+          "links": [
+            {
+              "type": "direct",
+              "label": "微信 4.1.15 安装包 (dmg)",
+              "url": "https://dldir1v6.qq.com/weixin/Universal/Mac/WeChatMac_4.1.15.dmg"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

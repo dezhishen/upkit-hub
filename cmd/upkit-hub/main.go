@@ -40,6 +40,16 @@ func main() {
 		return
 	}
 
+	// 盘点「下载导航站上哪些软件够得着接入条件」：这一步只读站点数据，不进 Serve，
+	// 也不会与宿主握手。加软件之前先跑它，能省掉一轮一轮重新抓数据的功夫。
+	if len(os.Args) > 1 && (os.Args[1] == "-audit-software-hub" || os.Args[1] == "--audit-software-hub") {
+		if err := auditSoftwareHub(os.Stdout, ""); err != nil {
+			fmt.Fprintln(os.Stderr, "盘点失败:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	regs := make([]plugin.Registration, 0, len(catalog))
 	for _, item := range catalog {
 		spec := item

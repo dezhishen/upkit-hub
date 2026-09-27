@@ -58,12 +58,15 @@ func (s appSpec) archToken() string {
 
 // catalog 是订阅里的全部软件。加一个软件 = 在这里加一条。
 //
-// 三条约定：
+// 四条约定：
 //
-//   - id 一旦发布就不能改（宿主按它记版本、算安装状态）；
+//   - id 一旦发布就不能改（宿主按它记版本、算安装状态）；用下载导航站做上游的软件，
+//     id 与站点上的 softwareId 保持一致，这样 `-audit-software-hub` 能直接对照两份清单；
 //   - 产物必须按本机架构挑 —— 宿主只用 Artifacts[0]，挑错就是装错包；
 //   - 优先便携版（zip）而不是安装器：upkit 自己负责解包、备份与回滚，安装器会绕开
-//     这套机制。
+//     这套机制；
+//   - 产物必须带摘要，而「摘要从哪来」要么由上游直接给出，要么在 src 里明确声明
+//     （见 source_softwarehub.go 的 digestSource）。
 var catalog = []appSpec{
 	{
 		id:          "fzf",
@@ -110,4 +113,53 @@ var catalog = []appSpec{
 		installPath: "${ROOT}/7-Zip",
 		entry:       []string{"7zFM.exe"},
 	},
+	{
+		id:          "vscode",
+		name:        "Visual Studio Code",
+		desc:        "代码编辑器（官方免安装版，解压即用）",
+		homepage:    "https://code.visualstudio.com/",
+		provides:    []string{"microsoft/vscode"},
+		src:         vscodeUpdate{products: vscodeArchiveProducts},
+		unpack:      "zip",
+		method:      "portable-inplace",
+		installPath: "${ROOT}/VSCode",
+		entry:       []string{"Code.exe"},
+		processes:   []string{"Code.exe"},
+	},
+	{
+		id:       "libreoffice",
+		name:     "LibreOffice",
+		desc:     "开源办公套件（官方 MSI 静默安装：系统级、需要管理员权限、不能自动回滚）",
+		homepage: "https://www.libreoffice.org/",
+		provides: []string{"documentfoundation/libreoffice"},
+		// 版本来自下载导航站（它每天跟进），但产物地址按 TDF 官方的命名规则合成：
+		// 站点给的地址指向腾讯云镜像，那个镜像的路径里多一层自己的目录、也不发布
+		// 校验文件。合成出来的地址带版本号（不可变），旁边就有官方的 .sha256。
+		src: softwareHub{
+			siteID:      "libreoffice",
+			origin:      "https://download.documentfoundation.org",
+			urlTemplate: "/libreoffice/stable/{version}/win/{archDir}/LibreOffice_{version}_Win_{archFile}.msi",
+			arch: map[string]archNames{
+				"amd64": {dir: "x86_64", file: "x86-64"},
+				"arm64": {dir: "aarch64", file: "aarch64"},
+			},
+			digest: sha256Sidecar{},
+		},
+		unpack: "raw",
+		method: "msiexec",
+		// MSI 装到哪由安装器决定（宿主不会改它），所以这里写官方固定布局而不是 ${ROOT}；
+		// 入口探测与「装没装上」的复核都按它来判断。
+		installPath: "${PROGRAMFILES}/LibreOffice",
+		entry:       []string{"program/soffice.exe"},
+		processes:   []string{"soffice.exe", "soffice.bin"},
+	},
+}
+
+// vscodeArchiveProducts 是 VS Code 官方更新接口里按架构区分的产物名。
+//
+// 用 `-archive`（zip）而不是 `-user`（安装器）：宿主自己解包、备份、回滚，安装器会
+// 绕开这套机制；arm64 上也有官方归档，不需要回退 x64。
+var vscodeArchiveProducts = map[string]string{
+	"amd64": "win32-x64-archive",
+	"arm64": "win32-arm64-archive",
 }

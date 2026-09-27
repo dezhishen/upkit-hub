@@ -1,0 +1,34 @@
+{
+  "softwareId": "notepad-plus-plus",
+  "updatedAt": "2026-09-27T09:55:31Z",
+  "platforms": [
+    {
+      "platform": "Windows",
+      "version": "latest",
+      "releaseDate": "2026-09-27",
+      "officialUrl": "https://notepad-plus-plus.org",
+      "packages": [
+        {
+          "architecture": "x64",
+          "links": [
+            {
+              "type": "webpage",
+              "label": "Notepad++ 下载页",
+              "url": "https://notepad-plus-plus.org/downloads/"
+            }
+          ]
+        },
+        {
+          "architecture": "x86",
+          "links": [
+            {
+              "type": "webpage",
+              "label": "Notepad++ 下载页 (x86)",
+              "url": "https://notepad-plus-plus.org/downloads/"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

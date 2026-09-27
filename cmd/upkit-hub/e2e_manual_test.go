@@ -66,7 +66,7 @@ func TestManualE2E(t *testing.T) {
 		t.Fatalf("Ping 失败")
 	}
 
-	for _, appID := range []string{"ungoogled-chromium", "fzf", "7zip"} {
+	for _, appID := range []string{"ungoogled-chromium", "fzf", "7zip", "vscode", "libreoffice"} {
 		rels, err := client.Source().Versions(ctx, plugin.SourceVersionsRequest{AppID: appID, Limit: 2})
 		if err != nil {
 			t.Errorf("%s 查询失败: %v", appID, err)

@@ -1,0 +1,125 @@
+{
+  "updatedAt": "2026-09-27T09:55:31Z",
+  "items": [
+    {
+      "id": "7zip",
+      "name": "7-Zip",
+      "icon": "./assets/software-icons/7zip.png",
+      "description": "高压缩率的开源压缩与解压工具。",
+      "organization": "Igor Pavlov",
+      "officialWebsite": "https://www.7-zip.org/",
+      "categories": [
+        "compression"
+      ],
+      "tags": [
+        "压缩"
+      ],
+      "source": {
+        "mode": "json",
+        "path": "versions/7zip.json",
+        "timeoutMs": 8000
+      }
+    },
+    {
+      "id": "git",
+      "name": "Git",
+      "icon": "./assets/software-icons/git.ico",
+      "description": "Linus Torvalds 创建的开源分布式版本控制系统，是目前最流行的版本控制工具。",
+      "organization": "Git Community",
+      "officialWebsite": "https://git-scm.com",
+      "categories": [
+        "development"
+      ],
+      "tags": [
+        "开发工具",
+        "版本控制"
+      ],
+      "source": {
+        "mode": "json",
+        "path": "versions/git.json",
+        "timeoutMs": 8000
+      }
+    },
+    {
+      "id": "libreoffice",
+      "name": "LibreOffice",
+      "icon": "./assets/software-icons/libreoffice.png",
+      "description": "自由开源的办公套件，包含文字处理、电子表格、演示文稿等组件。",
+      "organization": "The Document Foundation",
+      "officialWebsite": "https://zh-cn.libreoffice.org/",
+      "categories": [
+        "office"
+      ],
+      "tags": [
+        "办公",
+        "开源"
+      ],
+      "source": {
+        "mode": "json",
+        "path": "versions/libreoffice.json",
+        "timeoutMs": 8000
+      }
+    },
+    {
+      "id": "notepad-plus-plus",
+      "name": "Notepad++",
+      "icon": "./assets/software-icons/notepad-plus-plus.ico",
+      "description": "开源免费的源代码编辑器，支持多种编程语言，提供丰富的插件扩展。",
+      "organization": "Notepad++ Team",
+      "officialWebsite": "https://notepad-plus-plus.org",
+      "categories": [
+        "development"
+      ],
+      "tags": [
+        "开发工具",
+        "文本编辑器"
+      ],
+      "source": {
+        "mode": "json",
+        "path": "versions/notepad-plus-plus.json",
+        "timeoutMs": 8000
+      }
+    },
+    {
+      "id": "vscode",
+      "name": "Visual Studio Code",
+      "icon": "./assets/software-icons/vscode.ico",
+      "description": "Microsoft 出品的轻量级开源代码编辑器，支持丰富的扩展生态。",
+      "organization": "Microsoft",
+      "officialWebsite": "https://code.visualstudio.com",
+      "categories": [
+        "development"
+      ],
+      "tags": [
+        "开发工具",
+        "代码编辑器"
+      ],
+      "source": {
+        "mode": "json",
+        "path": "versions/vscode.json",
+        "timeoutMs": 8000
+      }
+    },
+    {
+      "id": "weixin",
+      "name": "微信",
+      "pinyin": "weixin wx",
+      "icon": "./assets/software-icons/weixin.svg",
+      "description": "腾讯微信，提供消息、通话、朋友圈等功能的通讯软件。",
+      "organization": "Tencent",
+      "officialWebsite": "https://weixin.qq.com/",
+      "categories": [
+        "communication"
+      ],
+      "tags": [
+        "即时通讯",
+        "社交"
+      ],
+      "source": {
+        "mode": "json",
+        "path": "versions/weixin.json",
+        "timeoutMs": 8000
+      }
+    }
+  ]
+}

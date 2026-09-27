@@ -1,0 +1,110 @@
+{
+  "softwareId": "libreoffice",
+  "updatedAt": "2026-09-27T09:55:31Z",
+  "platforms": [
+    {
+      "platform": "Linux",
+      "version": "26.8.0",
+      "releaseDate": "2026-05-11",
+      "officialUrl": "https://zh-cn.libreoffice.org/",
+      "packages": [
+        {
+          "architecture": "arm64",
+          "links": [
+            {
+              "type": "direct",
+              "label": "deb 包 (ARM64)",
+              "url": "https://mirrors.cloud.tencent.com/libreoffice/libreoffice/stable/26.8.0/deb/aarch64/LibreOffice_26.8.0_Linux_aarch64_deb.tar.gz"
+            },
+            {
+              "type": "direct",
+              "label": "rpm 包 (ARM64)",
+              "url": "https://mirrors.cloud.tencent.com/libreoffice/libreoffice/stable/26.8.0/rpm/aarch64/LibreOffice_26.8.0_Linux_aarch64_rpm.tar.gz"
+            }
+          ]
+        },
+        {
+          "architecture": "x64",
+          "links": [
+            {
+              "type": "direct",
+              "label": "deb 包 (64位)",
+              "url": "https://mirrors.cloud.tencent.com/libreoffice/libreoffice/stable/26.8.0/deb/x86_64/LibreOffice_26.8.0_Linux_x86-64_deb.tar.gz"
+            },
+            {
+              "type": "direct",
+              "label": "rpm 包 (64位)",
+              "url": "https://mirrors.cloud.tencent.com/libreoffice/libreoffice/stable/26.8.0/rpm/x86_64/LibreOffice_26.8.0_Linux_x86-64_rpm.tar.gz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "platform": "Windows",
+      "version": "26.8.0",
+      "releaseDate": "2026-05-11",
+      "officialUrl": "https://zh-cn.libreoffice.org/",
+      "packages": [
+        {
+          "architecture": "arm64",
+          "links": [
+            {
+              "type": "direct",
+              "label": "msi 安装包 (ARM64)",
+              "url": "https://mirrors.cloud.tencent.com/libreoffice/libreoffice/stable/26.8.0/win/aarch64/LibreOffice_26.8.0_Win_aarch64.msi"
+            }
+          ]
+        },
+        {
+          "architecture": "x64",
+          "links": [
+            {
+              "type": "direct",
+              "label": "msi 安装包 (64位)",
+              "url": "https://mirrors.cloud.tencent.com/libreoffice/libreoffice/stable/26.8.0/win/x86_64/LibreOffice_26.8.0_Win_x86-64.msi"
+            }
+          ]
+        },
+        {
+          "architecture": "x86",
+          "links": [
+            {
+              "type": "direct",
+              "label": "msi 安装包 (32位)",
+              "url": "https://mirrors.cloud.tencent.com/libreoffice/libreoffice/stable/26.8.0/win/x86/LibreOffice_26.8.0_Win_x86.msi"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "platform": "macOS",
+      "version": "26.8.0",
+      "releaseDate": "2026-05-11",
+      "officialUrl": "https://zh-cn.libreoffice.org/",
+      "packages": [
+        {
+          "architecture": "Apple Silicon",
+          "links": [
+            {
+              "type": "direct",
+              "label": "dmg 安装包 (Apple Silicon)",
+              "url": "https://mirrors.cloud.tencent.com/libreoffice/libreoffice/stable/26.8.0/mac/aarch64/LibreOffice_26.8.0_MacOS_aarch64.dmg"
+            }
+          ]
+        },
+        {
+          "architecture": "Intel",
+          "links": [
+            {
+              "type": "direct",
+              "label": "dmg 安装包 (Intel)",
+              "url": "https://mirrors.cloud.tencent.com/libreoffice/libreoffice/stable/26.8.0/mac/x86_64/LibreOffice_26.8.0_MacOS_x86-64.dmg"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

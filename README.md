@@ -96,10 +96,14 @@ https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
 ```
 ├── cmd/upkit-hub/          官方插件（catalog 模式：一条订阅分发多个软件）
 │   ├── catalog.go          软件清单：加一个软件 = 加一条 appSpec
+│   ├── audit.go            盘点下载导航站上的软件能不能接（-audit-software-hub）
 │   ├── source_github.go    上游之一：GitHub Releases
-│   └── source_ucbinaries.go 上游之二：ungoogled-chromium 官方二进制索引站
+│   ├── source_softwarehub.go 上游之二：下载导航站（版本）+ 官方校验文件（摘要）
+│   ├── source_ucbinaries.go 上游之三：ungoogled-chromium 官方二进制索引站
+│   └── source_vscode.go    上游之四：VS Code 官方更新接口
 ├── cmd/feedcheck/          发布前门禁：校验清单（可选核对产物与下载地址）
 ├── internal/feedcheck/     订阅的解析与校验，以及针对 gen-feed.sh 的测试
+├── internal/softwarehub/   下载导航站发布的 JSON 的解析（带真实数据夹具）
 ├── internal/ucbinaries/    ungoogled-chromium 索引站的 HTML 解析（带真实页面夹具）
 ├── scripts/
 │   ├── build-plugin.sh     插件构建（交叉编译、注入版本号、发布命名）
@@ -121,10 +125,16 @@ https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
 | `fzf` | `junegunn/fzf` 的 Releases | `windows_<arch>.zip`（便携版） |
 | `ungoogled-chromium` | [官方二进制索引站](https://ungoogled-software.github.io/ungoogled-chromium-binaries/) | `windows_<arch>.zip`（便携版） |
 | `7zip` | `ip7z/7zip` 的 Releases | `7z*-<arch>.exe`（官方安装器，静默安装） |
+| `vscode` | Microsoft 官方更新接口 | `win32-<arch>-archive`（免安装 zip） |
+| `libreoffice` | [下载导航站](https://github.com/dezhishen/original-software-hub)给版本，产物与校验文件来自 TDF 官方镜像 | `LibreOffice_<版本>_Win_<arch>.msi`（官方 MSI 静默安装） |
 
 `ungoogled-chromium` 的二进制由社区贡献者提交、**不是官方构建**，也无法保证可复现 ——
 索引站首页自己就这么写。这段说明会作为版本备注出现在界面上，并且每个文件都带上站点给的
 SHA256。
+
+`libreoffice` 是有意用 MSI 装的少数几个：它只有安装器形态（没有官方便携包），所以它是
+**系统级安装、需要管理员权限、无法自动回滚**的 —— 这三点都写进了软件说明，用户点安装前
+就能看到。其余软件优先选便携版。
 
 ## 增加一个软件
 
@@ -132,14 +142,16 @@ SHA256。
 上游来，其余字段交给宿主的四条轴。加完软件 → 构建 → 生成清单 → 发版，用户重新拉取订阅
 就能看到它。
 
-上游目前有两种形态：
+上游目前有四种形态：
 
 | `src` | 怎么拿版本与产物 |
 | --- | --- |
 | `githubReleases{repo, asset}` | 查 GitHub Releases，按 `asset` 通配挑包；`{arch}` 会按本机架构展开 |
 | `ucBinaries{platformDirs}` | 读索引站的平台索引页与版本页，挑出便携 zip 及其 SHA256 |
+| `softwareHub{siteID, origin, urlTemplate, arch}` | 从下载导航站拿版本，产物地址按官方命名规则合成，摘要由 `digest` 从官方渠道取（见下一节） |
+| `vscodeUpdate{products}` | 查官方更新接口，一次拿到版本、摘要与由版本号决定的不可变地址 |
 
-三条容易踩的坑：
+四条容易踩的坑：
 
 - **产物必须按本机架构挑**。宿主只用 `Artifacts[0]`，挑错了没有第二次机会。插件是按架构
   分别构建的（订阅里同时有 windows/amd64 与 windows/arm64 两份），所以用 `runtime.GOARCH`；
@@ -147,6 +159,8 @@ SHA256。
 - **优先便携版而不是安装器**。upkit 自己负责解包、备份与回滚，安装器会绕开这套机制。
 - **尽量带上摘要**。索引站给的 SHA256 会作为 `Artifacts[].Digest` 交给宿主；
   `PickPortable` 因此宁可不提供某个版本，也不给一个无法校验的下载。
+- **地址必须不可变**。带版本号的地址才能固定摘要；「永远指最新」的转发地址上，摘要今天
+  对、明天就错了，所以那种软件要么换官方接口（`vscode` 就是这么做的），要么不接。
 
 `cmd/upkit-hub/catalog_test.go` 里有几条约束性用例：id 必须合法且唯一、必须声明入口与
 安装路径、`{arch}` 必须按上游命名展开。加软件时它们会替你挡住最低级的错误。
@@ -156,6 +170,39 @@ SHA256。
 ```bash
 UPKIT_HUB_LIVE=1 go test ./internal/ucbinaries/ ./cmd/upkit-hub/ -run Live -v
 ```
+
+## 从下载导航站接软件
+
+[original-software-hub](https://github.com/dezhishen/original-software-hub) 把七十多个常用
+软件的「当前版本 + 官方下载入口」每天抓一遍，发布成静态 JSON。本仓库把它当一份**版本
+索引**用，而不是安装清单 —— 其中一大半软件接不进来，原因不在实现，在数据形态：
+
+| 它给的 | 它没给的 | 我们怎么补 |
+| --- | --- | --- |
+| 版本号、官方入口、主页与简介 | 摘要（一个都没有） | 在 `src.digest` 里声明摘要来源（`sha256Sidecar` 读同目录的 `.sha256`）；取不到摘要就不发布产物 |
+| 平台与架构、直链文件 | 不可变地址（很多是「永远指最新」的转发，路径里还常常多一层镜像自己的目录） | 在 `src.origin` + `src.urlTemplate` 里按官方命名规则写死地址，站点的文件名拿来做交叉校验 |
+
+先跑盘点，看哪些软件够得着：
+
+```bash
+go run ./cmd/upkit-hub -audit-software-hub
+```
+
+它把每个软件归到一类（数据截至 2026-09-27）：
+
+| 状态 | 数量 | 含义 |
+| --- | --- | --- |
+| 只有网页/商店入口 | 39 | 站点记的「下载入口」是官网页面或应用商店，没有可下载的文件，接不了 |
+| 版本是占位值 | 14 | 版本字段的原文是 `latest`（意思是「地址永远指最新」），没法用来判断该不该升级，接不了 |
+| 待补安装契约 | 19 | 版本与直链都在，但要逐个核实静默参数 / 安装目录 / 入口可执行文件 / 进程名才能接 |
+| 已接入 | 3 | `7zip`、`vscode`、`libreoffice` |
+
+`vscode` 在站点里也有，但上游用的是微软官方更新接口：站点给它的地址是滚动地址、也没有
+摘要，而官方接口一次就能给出版本、内容摘要和一个由版本号决定的不可变地址。
+
+两个限制来自站点形态，不是实现偷懒：它**只保留当前版本**（所以从这里接进来的软件装不了
+旧版），并且架构写法很杂（`x64`、`x64/x86`、`aarch64 (appimage)`…）—— 归一化认不出来的
+包一律跳过，绝不猜。
 
 ## 本地开发
 
