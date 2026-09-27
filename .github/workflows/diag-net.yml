@@ -1,0 +1,63 @@
+name: Diag Net
+
+# 临时诊断工作流：从 GitHub 的 runner 上探一下各上游是否可达，并把结果写进
+# **注解**（::error:: 会生成 check-run annotation，公开可读）—— 本机拿不到 CI 日志，
+# 只能这样把结论传出来。用完即删。
+on:
+  push:
+    paths:
+      - '.github/workflows/diag-net.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: 探测站点与厂商 CDN
+        run: |
+          set -uo pipefail
+          probe() { # 名称 url
+            local name="$1" url="$2" code
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -r 0-0 "$url" 2>/dev/null || echo "ERR")
+            echo "::error::${name} -> ${code}"
+          }
+          probe "站点 index.json" "https://software-hub.sdniu.top/data/json/index.json"
+          probe "微信 CDN" "https://dldir1v6.qq.com/weixin/Universal/Windows/WeChatWin_4.1.15.exe"
+          probe "百度网盘 CDN" "https://issuepcdn.baidupcs.com/issue/netdisk/yunguanjia/BaiduNetdisk_8.8.8.101.exe"
+          probe "GitHub API" "https://api.github.com/repos/dezhishen/upkit-hub"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://proxy.golang.org/github.com/dezhishen/upkit/@v/list" 2>/dev/null || echo ERR)
+          echo "::error::Go 模块代理 -> ${code}"
+
+      - name: 跑一次插件导出（把真实报错带出来）
+        run: |
+          set -uo pipefail
+          if out=$(go run ./cmd/upkit-hub -list-pinned-artifacts 2>&1); then
+            flat=$(printf '%s' "$out" | tr '\n' '|')
+            echo "::error::导出成功: ${flat:0:900}"
+          else
+            flat=$(printf '%s' "$out" | tr '\n' '|')
+            echo "::error::导出失败: ${flat:0:900}"
+          fi
+
+      - name: 跑一次摘要表脚本（非 strict）
+        run: |
+          set -uo pipefail
+          if out=$(bash scripts/gen-digests.sh 2>&1); then
+            flat=$(printf '%s' "$out" | tr '\n' '|')
+            echo "::error::摘要表脚本成功: ${flat:0:900}"
+          else
+            flat=$(printf '%s' "$out" | tr '\n' '|')
+            echo "::error::摘要表脚本失败(exit=$?): ${flat:0:900}"
+          fi
+          git --no-pager diff --stat || true
