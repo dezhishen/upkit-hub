@@ -34,6 +34,8 @@ import (
 //
 //	Parse               ← internal/pluginfeed/feed.go     Parse（严格模式 KnownFields）
 //	Feed.Validate       ← internal/pluginfeed/schema.go   Feed.Validate / Plugin.validate / Package.validate
+//	SchemaVersion       ← internal/pluginfeed/schema.go   SchemaVersion（2 = 域名声明）
+//	validateHosts       ← internal/pluginfeed/schema.go   validateHosts（download_hosts / plugin_hosts）
 //	SupportedPlatforms  ← internal/pluginfeed/schema.go   SupportedPlatforms
 //	TargetOS 等常数     ← internal/pluginfeed/schema.go   TargetOS / ArchAMD64 / ArchARM64
 //	NormalizeSHA256     ← internal/pluginfeed/validate.go NormalizeSHA256
@@ -46,7 +48,10 @@ import (
 // 能下到那件东西）—— 它们只做比对，不改变语义。
 
 // SchemaVersion 是本仓库能识别的最新订阅 schema（与宿主当前值一致）。
-const SchemaVersion = 1
+//
+// 它是**上限**：宿主与本包都接受小于等于它的清单，所以 schema 1 的老清单照旧可用，
+// 不写域名声明就是「未声明」。
+const SchemaVersion = 2
 
 // upkit 只发行 Windows 版本，所以「宿主平台」里的系统部分是常量（与宿主同一口径）。
 const (
@@ -86,15 +91,22 @@ type Feed struct {
 }
 
 // Plugin 是订阅里的一个插件条目。
+//
+// DownloadHosts / PluginHosts 是 schema 2 起的域名声明，字段语义与宿主
+// internal/pluginfeed/schema.go 的 Plugin 一一对应（那里是权威）。
 type Plugin struct {
-	ID             string             `yaml:"id"`
-	Name           string             `yaml:"name"`
-	Description    string             `yaml:"description"`
-	Homepage       string             `yaml:"homepage"`
-	Version        string             `yaml:"version"`
-	Mode           string             `yaml:"mode"`
-	MinHostVersion string             `yaml:"min_host_version"`
-	Packages       map[string]Package `yaml:"packages"`
+	ID             string `yaml:"id"`
+	Name           string `yaml:"name"`
+	Description    string `yaml:"description"`
+	Homepage       string `yaml:"homepage"`
+	Version        string `yaml:"version"`
+	Mode           string `yaml:"mode"`
+	MinHostVersion string `yaml:"min_host_version"`
+	// DownloadHosts 是该插件可能下载东西的域名（宿主会据此强制校验）。
+	DownloadHosts []string `yaml:"download_hosts,omitempty"`
+	// PluginHosts 是插件进程自己会访问的域名（仅供展示告知）。
+	PluginHosts []string           `yaml:"plugin_hosts,omitempty"`
+	Packages    map[string]Package `yaml:"packages"`
 }
 
 // Package 是某个平台上的插件产物。
@@ -224,6 +236,38 @@ func (p Plugin) validate(hostVersion, hostPlatform string) error {
 	}
 	if p.MinHostVersion != "" && hostVersion != "" && CompareVersions(hostVersion, p.MinHostVersion) < 0 {
 		return fmt.Errorf("插件 %s 要求宿主版本 >= %s，当前为 %s", p.ID, p.MinHostVersion, hostVersion)
+	}
+	if err := validateHosts(p.ID, "download_hosts", p.DownloadHosts); err != nil {
+		return err
+	}
+	if err := validateHosts(p.ID, "plugin_hosts", p.PluginHosts); err != nil {
+		return err
+	}
+	return nil
+}
+
+// hostRe 与宿主同一套限制：只写主机名，不含协议、路径、端口、通配符。
+var hostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+
+// ValidHost 报告域名声明里的主机名是否合法（与宿主同一套规则）。
+//
+// 导出是给本仓库的测试用：声明由上游推导，要在写进清单前就确认它长对了。
+func ValidHost(host string) bool { return hostRe.MatchString(strings.TrimSpace(host)) }
+
+func validateHosts(id, field string, hosts []string) error {
+	seen := make(map[string]bool, len(hosts))
+	for _, raw := range hosts {
+		h := strings.TrimSpace(raw)
+		if h != strings.ToLower(h) {
+			return fmt.Errorf("插件 %s 的 %s 里 %q 必须是小写主机名", id, field, raw)
+		}
+		if !ValidHost(h) {
+			return fmt.Errorf("插件 %s 的 %s 里 %q 不是合法主机名（只写主机名，不含协议、路径、端口或通配符）", id, field, raw)
+		}
+		if seen[h] {
+			return fmt.Errorf("插件 %s 的 %s 里 %q 重复", id, field, raw)
+		}
+		seen[h] = true
 	}
 	return nil
 }

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/dezhishen/upkit/pkg/plugin"
 )
@@ -30,6 +32,14 @@ func (a *hubApp) Versions(ctx context.Context, req plugin.VersionsRequest) ([]pl
 }
 
 func main() {
+	// 清单生成需要知道「这个插件声明哪些域名」，而声明的唯一事实来源是 catalog。
+	// 所以让插件自己把它打印出来，供 scripts/gen-feed.sh 直接接在参数后面（见
+	// declarations.go 的 Fragment）。带这个参数时不进 Serve，也不会与宿主握手。
+	if len(os.Args) > 1 && (os.Args[1] == "-print-declarations" || os.Args[1] == "--print-declarations") {
+		fmt.Print(Declarations().Fragment())
+		return
+	}
+
 	regs := make([]plugin.Registration, 0, len(catalog))
 	for _, item := range catalog {
 		spec := item

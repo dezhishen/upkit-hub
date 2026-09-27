@@ -40,6 +40,38 @@ upkit 主仓库只做平台本体，另外把一个订阅地址编进二进制�
 下载域名（仅跨域绝对地址时需要）→ **插件 sha256 写进清单的 `sources[].trust`** —— 最后
 这一步没做，插件不会被启动（界面上会显示「未信任 · 需在清单里写入 sha256」）。
 
+## 域名声明（schema 2）
+
+第 2 层的下载地址是插件**运行时**给出的，用户添加订阅时看不到它们。于是清单可以把它
+提前声明出来，让用户在添加订阅（以及声明发生变化）时一次性确认，而不是每次安装弹窗：
+
+```yaml
+  - id: upkit-hub
+    download_hosts:        # 宿主强制校验：插件给出的地址不在这里就拒绝下载
+      - github.com
+    plugin_hosts:          # 仅告知：插件进程自己会访问的域名，宿主拦不住也无法授权
+      - api.github.com
+      - ungoogled-software.github.io
+```
+
+声明**不手写**：它由各上游推导（`cmd/upkit-hub/catalog.go` 里每个 source 的 `hosts()`），
+因为这条规则要拿去强制校验下载地址 —— 手写必然跟代码漂移，漏一个域名用户的下载就被拒。
+
+```bash
+go run ./cmd/upkit-hub -print-declarations   # --download-hosts=… / --plugin-hosts=…
+make feed SCHEMA=2                          # 生成带声明的 schema 2 清单
+```
+
+⚠️ **发布顺序不能颠倒**：`download_hosts` / `plugin_hosts` 属于 schema 2，只有认识到
+它们的宿主才认；旧宿主会以 `field download_hosts not found` 整份拒绝。而官方源走
+`releases/latest`，一发就全量生效。所以顺序是：
+
+1. 宿主把 `SchemaVersion` 提到 2 并发布；
+2. 等用户升级到位；
+3. 再把本仓库的默认 schema 改成 2（`build-release.yml` 的 `schema` 默认值、`make feed SCHEMA=2`）。
+
+在此之前，脚本与 CI 默认都产 schema 1（不含声明），已发布清单的行为不变。
+
 ## 内置订阅地址
 
 ```
@@ -56,6 +88,7 @@ https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
 | 产物地址写成**相对形式** `./<插件ID>-windows-<arch>.exe` | 由宿主相对**订阅地址**解析：内置地址取的是同一次发布里的 `feed.yaml`，于是产物地址也落在同一次发布上 —— 同源（用户不必额外确认「下载域名」），且不必把 tag 写进清单。**必须带 `./`**：以 `/` 开头是「相对 origin 根」，会变成 `https://github.com/<文件>`，那是 404 |
 | 每个插件必须覆盖 `windows/amd64` 与 `windows/arm64` | 漏一个架构，那个架构的用户会在「校验订阅」这一步失败，而这本可以在发布前发现 |
 | sha256 / size 由脚本构建后现算 | 手工填摘要迟早会错，而错的摘要等于装不上 |
+| 清单 schema 的升版必须等宿主支持 | 官方源走 `releases/latest`，一发就全量生效；旧宿主在严格模式下遇到不认识的字段会**整份拒绍解析** |
 | 预览版用 `-rc.N` / `-beta.N` 后缀 | `releases/latest` 不含 prerelease，所以发预览版不会改变用户读到的清单 |
 
 ## 目录

@@ -11,6 +11,9 @@
 #       --version <ver>        feed 里 plugins[].version（一般与 tag 一致）
 #       --relative             产物地址写成相对 feed 自己（./<文件>）
 #       --base-url <url>       产物地址的绝对前缀（release 的 download 地址）
+#       --schema <1|2>         清单 schema（默认 1）
+#       --download-hosts <列表> 声明的下载域名，逗号分隔（仅 schema 2）
+#       --plugin-hosts <列表>   插件自有网络访问域名，逗号分隔（仅 schema 2）
 #       --name <id>=<名称>     覆盖某个插件的展示名（可重复）
 #   -n, --name-default <名称>  订阅本身的名称
 #       --mode <catalog|full>  插件的安装模式（默认 catalog）
@@ -33,6 +36,15 @@
 #     —— 同源、不需要额外的下载域名授权，而且自然跟着最新发布走。
 #   --base-url 把地址写死成绝对地址（自建分发、内网镜像时用）；跨域时宿主会单独
 #     向用户确认该域名。
+#
+# 关于 --schema：默认仍是 1（没有域名声明）。2 会额外写 download_hosts /
+# plugin_hosts —— 这两个字段**只有认识到它们的宿主才认**，旧宿主在严格模式下会
+# 解析失败（field not found），而官方源走 releases/latest，一发就是全量生效。
+# 因此升级顺序必须是：先让宿主支持（它自己的 SchemaVersion 提到 2）并发布、
+# 等用户升上去，再切这里的 --schema 2。
+#
+# 声明本身不要手写：由插件自己算（`go run ./cmd/upkit-hub -print-declarations`），
+# 唯一事实来源是 cmd/upkit-hub 的 catalog。
 
 set -euo pipefail
 
@@ -44,6 +56,9 @@ PLUGINS_DIR="dist/plugins"
 VERSION=""
 BASE_URL=""
 RELATIVE=0
+SCHEMA=1
+DOWNLOAD_HOSTS=""
+PLUGIN_HOSTS=""
 FEED_NAME="upkit 官方源"
 MODE="catalog"
 MIN_HOST=""
@@ -62,6 +77,21 @@ usage() {
 
 die() { echo "错误: $*" >&2; exit 1; }
 
+# 支持 --flag=value 的写法：拆成两个参数再进主循环。
+#
+# 插件自己报出来的声明就是这种形态（`go run ./cmd/upkit-hub -print-declarations`
+# 打印的片段），直接 $(...) 接在命令行后面即可。
+if (( $# > 0 )); then
+  normalized=()
+  for arg in "$@"; do
+    case "$arg" in
+      --*=*) normalized+=("${arg%%=*}" "${arg#*=}") ;;
+      *)     normalized+=("$arg") ;;
+    esac
+  done
+  set -- "${normalized[@]}"
+fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -o|--out)            OUT="${2:-}"; shift 2 ;;
@@ -69,6 +99,9 @@ while [[ $# -gt 0 ]]; do
     --version)           VERSION="${2:-}"; shift 2 ;;
     --relative)          RELATIVE=1; shift ;;
     --base-url)          BASE_URL="${2:-}"; shift 2 ;;
+    --schema)            SCHEMA="${2:-}"; shift 2 ;;
+    --download-hosts)    DOWNLOAD_HOSTS="${2:-}"; shift 2 ;;
+    --plugin-hosts)      PLUGIN_HOSTS="${2:-}"; shift 2 ;;
     --name)              NAME_OVERRIDES["${2%%=*}"]="${2#*=}"; shift 2 ;;
     -n|--name-default)   FEED_NAME="${2:-}"; shift 2 ;;
     --mode)              MODE="${2:-}"; shift 2 ;;
@@ -87,6 +120,12 @@ else
   BASE_URL="${BASE_URL%/}"
 fi
 [[ -d "$PLUGINS_DIR" ]] || die "找不到插件产物目录 $PLUGINS_DIR"
+case "$SCHEMA" in 1|2) ;; *) die "--schema 只能是 1 或 2" ;; esac
+if (( SCHEMA < 2 )); then
+  # 别写了声明却忘了升 schema：那样存量宿主会在严格模式下直接解析失败。
+  [[ -z "$DOWNLOAD_HOSTS" && -z "$PLUGIN_HOSTS" ]] \
+    || die "域名声明需要 --schema 2（写进 schema 1 会让存量宿主解析失败）"
+fi
 case "$MODE" in catalog|full) ;; *) die "--mode 只能是 catalog 或 full" ;; esac
 
 # ── 摘要工具（Linux 用 sha256sum，macOS 用 shasum）────────────
@@ -101,6 +140,17 @@ sha256_of() {
 }
 
 size_of() { wc -c <"$1" | tr -d ' '; }
+
+# emit_hosts 把逗号分隔的域名写成 YAML 列表（只在 schema 2 里用）。
+emit_hosts() {
+  local field="$1" list="$2" item
+  [[ -n "$list" ]] || return 0
+  printf '    %s:\n' "$field"
+  local IFS=','
+  for item in $list; do
+    printf '      - %s\n' "$item"
+  done
+}
 
 # ── 扫描产物，按插件归组 ──────────────────────────────────────
 # 用「id|平台|文件名」三列的临时文本收集，最后排序输出，保证同样输入得到同样的文件
@@ -162,7 +212,7 @@ mkdir -p "$(dirname "$OUT")"
 # 摘要由产物现算，因此与产物天然一致。
 
 HEADER
-  printf 'schema: 1\n'
+  printf 'schema: %s\n' "$SCHEMA"
   printf 'name: %s\n' "$FEED_NAME"
   printf 'updated_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'plugins:\n'
@@ -181,6 +231,11 @@ HEADER
       printf '    version: %s\n' "$VERSION"
       printf '    mode: %s\n' "$MODE"
       [[ -n "$MIN_HOST" ]] && printf '    min_host_version: "%s"\n' "$MIN_HOST"
+      if (( SCHEMA >= 2 )); then
+        # 两类域名分开写：前者宿主会强制校验（超出就拒绝下载），后者只是告知。
+        emit_hosts download_hosts "$DOWNLOAD_HOSTS"
+        emit_hosts plugin_hosts "$PLUGIN_HOSTS"
+      fi
       printf '    packages:\n'
     fi
     printf '      %s:\n' "$platform"
@@ -203,6 +258,7 @@ HEADER
 
 echo "==> 已生成订阅清单 $OUT"
 echo "    版本:   $VERSION"
+echo "    schema: $SCHEMA"
 echo "    地址:   $( ((RELATIVE == 1)) && echo '相对（./<文件>，由宿主相对订阅地址解析）' || echo "绝对（$BASE_URL）" )"
 echo "    插件:   $(LC_ALL=C sort -t'|' -k1,1 -u "$entries" | cut -d'|' -f1 | paste -sd' ' -)"
 echo "    平台:   $(cut -d'|' -f2 "$entries" | LC_ALL=C sort -u | paste -sd' ' -)"

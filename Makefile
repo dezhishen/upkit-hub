@@ -37,6 +37,15 @@ URL_ARGS = $(if $(BASE_URL),--base-url $(BASE_URL),--relative)
 # 核对相对地址时用来解析的清单地址（默认本地自签 https 源）。
 FEED_URL ?= https://127.0.0.1:8443/feed.yaml
 
+# 清单 schema：默认 1（不含域名声明）。
+#
+# 切到 2 的前提是**宿主已经支持**（它自己的 SchemaVersion >= 2）并已发布、用户升级
+# 到位 —— 官方源走 releases/latest，一发就全量生效，而旧宿主在严格模式下遇到不认识
+# 的字段会整份拒绝。声明本身不手写，由插件从 catalog 推导：
+#
+#   make feed SCHEMA=2
+SCHEMA ?= 1
+
 FEED_NAME   ?= upkit 官方源
 PLUGIN_NAME ?= $(PLUGIN_ID)=upkit 官方插件集
 
@@ -77,13 +86,20 @@ plugins: ## 交叉编译两个架构的插件产物到 dist/plugins
 			-t "$$target" $(PLUGIN_PACKAGE) || exit 1; \
 	done
 
-feed: plugins ## 组装 dist/release/ 并生成清单 feed.yaml
+feed: plugins ## 组装 dist/release/ 并生成清单 feed.yaml（SCHEMA=2 时写入域名声明）
 	@rm -rf $(RELEASE_DIR)
 	@mkdir -p $(RELEASE_DIR)
 	@cp $(PLUGINS_DIR)/*.exe $(RELEASE_DIR)/
+	@decl=""; \
+	if [ "$(SCHEMA)" = "2" ]; then \
+		decl="$$($(GO) run ./cmd/upkit-hub -print-declarations | tr '\n' ' ')"; \
+		echo "==> 域名声明: $$decl"; \
+	fi; \
 	bash scripts/gen-feed.sh --plugins-dir $(RELEASE_DIR) \
 		--version "$(PLUGIN_VERSION)" \
 		$(URL_ARGS) \
+		--schema "$(SCHEMA)" \
+		$$decl \
 		--name "$(PLUGIN_NAME)" \
 		-n "$(FEED_NAME)" \
 		-o $(RELEASE_DIR)/feed.yaml
@@ -105,7 +121,7 @@ help: ## 显示本帮助
 	@echo "可用目标："
 	@echo "  check          格式化 + 文件头 + vet + 测试"
 	@echo "  plugins        构建两个架构的插件产物"
-	@echo "  feed           生成 dist/release/feed.yaml"
+	@echo "  feed           生成 dist/release/feed.yaml（SCHEMA=2 时带域名声明）"
 	@echo "  release-local  plugins + feed + 校验"
 	@echo "  serve          起本地 https 静态服务（自签证书）"
 	@echo "  verify         校验 dist/release 并下载核对"

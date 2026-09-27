@@ -104,8 +104,10 @@ func TestGenFeedScriptProducesValidFeed(t *testing.T) {
 			t.Fatalf("%s 上校验失败: %v", platform, err)
 		}
 	}
-	if feed.Schema != SchemaVersion {
-		t.Errorf("schema = %d，期望 %d", feed.Schema, SchemaVersion)
+	if feed.Schema != 1 {
+		// 脚本默认仍产 schema 1（域名声明是可选的），只有显式 --schema 2 才写声明 ——
+		// 避免在宿主支持之前把新字段发出去。
+		t.Errorf("默认应当产 schema 1，实际 %d", feed.Schema)
 	}
 	if feed.UpdatedAt.IsZero() {
 		t.Errorf("updated_at 没能解析成时间: %s", raw)
@@ -293,5 +295,75 @@ func TestPlatformListMatchesScript(t *testing.T) {
 	}
 	if got, want := strings.Fields(string(m[1])), SupportedPlatforms(); !slices.Equal(got, want) {
 		t.Fatalf("脚本里的平台列表 %v 与代码里的 %v 不一致", got, want)
+	}
+}
+
+// ── schema 2：域名声明（默认不开，只有显式 --schema 2 才写）──
+
+func TestGenFeedScriptSchemaTwoDeclarations(t *testing.T) {
+	bash, script := requireBashAndScript(t)
+
+	dir := t.TempDir()
+	pluginsDir := filepath.Join(dir, "plugins")
+	writeArtifacts(t, pluginsDir, []byte("x"),
+		"upkit-hub-windows-amd64.exe", "upkit-hub-windows-arm64.exe")
+
+	out := filepath.Join(dir, "feed.yaml")
+	// 用 --flag=value 的写法：插件自己报出来的声明片段就是这个形态。
+	runGenFeed(t, bash, script,
+		"--plugins-dir="+pluginsDir,
+		"--version=0.0.0",
+		"--relative",
+		"--schema=2",
+		"--download-hosts=github.com",
+		"--plugin-hosts=api.github.com,ungoogled-software.github.io",
+		"-o", out,
+	)
+
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("读生成结果: %v", err)
+	}
+	feed, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("生成的清单无法解析: %v\n%s", err, raw)
+	}
+	if feed.Schema != 2 {
+		t.Errorf("schema 应为 2，实际 %d", feed.Schema)
+	}
+	if err := feed.ValidateAllPlatforms("0.0.0"); err != nil {
+		t.Fatalf("校验失败: %v", err)
+	}
+	p := feed.Plugins[0]
+	if len(p.DownloadHosts) != 1 || p.DownloadHosts[0] != "github.com" {
+		t.Errorf("download_hosts 不对: %v", p.DownloadHosts)
+	}
+	want := []string{"api.github.com", "ungoogled-software.github.io"}
+	if !slices.Equal(p.PluginHosts, want) {
+		t.Errorf("plugin_hosts 不对: %v，期望 %v", p.PluginHosts, want)
+	}
+}
+
+// 写了声明却忘了升 schema：存量宿主会在严格模式下直接解析失败，所以必须报错而不是放行。
+func TestGenFeedScriptRejectsDeclarationsWithoutSchemaTwo(t *testing.T) {
+	bash, script := requireBashAndScript(t)
+
+	dir := t.TempDir()
+	pluginsDir := filepath.Join(dir, "plugins")
+	writeArtifacts(t, pluginsDir, []byte("x"),
+		"upkit-hub-windows-amd64.exe", "upkit-hub-windows-arm64.exe")
+
+	out, err := exec.Command(bash, script,
+		"--plugins-dir", pluginsDir,
+		"--version", "0.0.0",
+		"--relative",
+		"--download-hosts", "github.com",
+		"-o", filepath.Join(dir, "feed.yaml"),
+	).CombinedOutput()
+	if err == nil {
+		t.Fatalf("不带 --schema 2 的声明应当被拒绍:\n%s", out)
+	}
+	if !strings.Contains(string(out), "--schema 2") {
+		t.Errorf("错误信息应告诉用户怎么修:\n%s", out)
 	}
 }

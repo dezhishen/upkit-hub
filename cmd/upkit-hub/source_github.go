@@ -110,6 +110,16 @@ func (s githubReleases) versions(ctx context.Context, cfg plugin.AppConfig, spec
 	return out, nil
 }
 
+// hosts 报告这个上游用到的域名。
+//
+//   - 下载：GitHub 的 Release 资产始终从 github.com 下发（会 302 到 CDN，但重定向
+//     目标不写进声明 —— 那是 GitHub 的实现细节，历史上变过，写死只会跟着过期；
+//     跳转后的字节由 sha256 兜底）。
+//   - 插件自有：版本查询走 api.github.com，由插件进程自己发起，宿主拦不住。
+func (s githubReleases) hosts() (download, pluginOwn []string) {
+	return []string{"github.com"}, []string{"api.github.com"}
+}
+
 // assetPattern 把资产名通配里的 {arch} 展开成上游命名里的架构片段。
 func assetPattern(pattern, token string) string {
 	return strings.ReplaceAll(pattern, "{arch}", token)

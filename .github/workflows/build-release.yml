@@ -38,6 +38,15 @@ on:
         required: false
         type: string
         default: ""
+      schema:
+        description: >-
+          清单 schema：1 = 不含域名声明；2 = 写入 download_hosts/plugin_hosts。
+          改成 2 的前提是宿主已支持（SchemaVersion >= 2）并已发布、用户升级到位：
+          官方源走 releases/latest，新字段一发就全量生效，旧宿主会整份拒绝解析。
+          声明本身不手写，由 cmd/upkit-hub 从 catalog 推导。
+        required: false
+        type: string
+        default: "1"
 
 permissions:
   contents: read
@@ -88,6 +97,7 @@ jobs:
           PLUGIN_VERSION: ${{ steps.ver.outputs.version }}
           INPUT_BASE_URL: ${{ inputs.base-url }}
           MIN_HOST: ${{ inputs.min-host-version }}
+          SCHEMA: ${{ inputs.schema }}
         run: |
           set -euo pipefail
 
@@ -99,10 +109,18 @@ jobs:
           args=(
             --plugins-dir dist/release
             --version "$PLUGIN_VERSION"
+            --schema "$SCHEMA"
             --name "upkit-hub=upkit 官方插件集"
             -n "upkit 官方源"
             -o dist/release/feed.yaml
           )
+          if [[ "$SCHEMA" == "2" ]]; then
+            # 域名声明由插件自己从 catalog 推导（唯一事实来源），不手写 ——
+            # 手写必然跟代码漂移，而这条声明是要拿去强制校验下载地址的。
+            mapfile -t decl < <(go run ./cmd/upkit-hub -print-declarations)
+            printf '域名声明：\n  %s\n' "${decl[*]}"
+            args+=("${decl[@]}")
+          fi
           if [[ -n "$INPUT_BASE_URL" ]]; then
             echo "产物地址前缀: ${INPUT_BASE_URL}（绝对地址）"
             args+=(--base-url "$INPUT_BASE_URL")

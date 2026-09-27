@@ -85,7 +85,7 @@ plugins:
 		want string
 	}{
 		{"缺少 schema", strings.Replace(valid, "schema: 1\n", "", 1), "schema"},
-		{"schema 比宿主新", strings.Replace(valid, "schema: 1", "schema: 2", 1), "请升级 upkit"},
+		{"schema 比宿主新", strings.Replace(valid, "schema: 1", "schema: 3", 1), "请升级 upkit"},
 		{"没有插件", "schema: 1\nplugins: []\n", "没有任何插件"},
 		{"id 非法", strings.Replace(valid, "id: demo", "id: ../evil", 1), "不合法"},
 		{"缺一个架构", strings.Replace(valid, `
@@ -395,7 +395,6 @@ func TestResolveURL(t *testing.T) {
 	}
 }
 
-// 整份清单用相对地址时，-check-urls 必须真的能下载核对（而不是默默跳过）。
 func TestVerifyURLsRelative(t *testing.T) {
 	payload := []byte("relative plugin bytes")
 	sha := digestOf(t, payload)

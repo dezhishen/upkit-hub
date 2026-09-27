@@ -16,6 +16,11 @@ import (
 type source interface {
 	// versions 返回该软件的可选版本（新 → 旧），最多 limit 个（<=0 表示由插件决定）。
 	versions(ctx context.Context, cfg plugin.AppConfig, spec appSpec, limit int) ([]plugin.Release, error)
+	// hosts 报告这个上源会用到哪些域名（下载 / 插件自有），供清单里的域名声明推导。
+	//
+	// 它必须写清**实际**会访问的域名：宿主会拿声明去强制校验下载地址，漏一个就会
+	// 让用户的下载被拒。
+	hosts() (download, pluginOwn []string)
 }
 
 // appSpec 描述订阅里的一个软件。

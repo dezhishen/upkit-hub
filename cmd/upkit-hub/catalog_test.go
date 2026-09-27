@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/dezhishen/upkit-hub/internal/feedcheck"
 	"github.com/dezhishen/upkit/pkg/plugin"
 )
 
@@ -202,5 +204,47 @@ func TestLiveCatalogSources(t *testing.T) {
 			}
 			t.Logf("%s v%s -> %s（%s…）", spec.id, rel.Version, art.Name, art.Digest[:22])
 		}
+	}
+}
+
+// 清单里的域名声明由上游推导，这里盯两件事：每个软件都报得出域名，且汇总出的主机名
+// 都是合法形式 —— 写错了要等到发布门禁那一步才报错，那时已经晚了。
+func TestDeclarationsAreDerivableAndValid(t *testing.T) {
+	for _, spec := range catalog {
+		download, pluginOwn := spec.src.hosts()
+		if len(download) == 0 {
+			t.Errorf("%s 没有声明任何下载域名（宿主会拒绝它给出的每一个地址）", spec.id)
+		}
+		for _, h := range append(append([]string{}, download...), pluginOwn...) {
+			if !feedcheck.ValidHost(h) {
+				t.Errorf("%s 声明了不合法的主机名 %q", spec.id, h)
+			}
+		}
+	}
+
+	d := Declarations()
+	if len(d.Download) == 0 || len(d.Plugin) == 0 {
+		t.Fatalf("声明不应为空: %+v", d)
+	}
+	// 排序 + 去重：清单是给人看的，输出稳定才好核对。
+	if !sort.StringsAreSorted(d.Download) || !sort.StringsAreSorted(d.Plugin) {
+		t.Errorf("声明应当排序: %+v", d)
+	}
+	for _, h := range append(append([]string{}, d.Download...), d.Plugin...) {
+		if !feedcheck.ValidHost(h) {
+			t.Errorf("汇总出的主机名不合法: %q", h)
+		}
+	}
+
+	// Fragment 是给 gen-feed.sh 直接接在命令行后面的：两行、值里不含空格，
+	// 调用方靠词分割展开它。
+	frag := d.Fragment()
+	for _, want := range []string{"--download-hosts=", "--plugin-hosts="} {
+		if !strings.Contains(frag, want) {
+			t.Errorf("声明片段里应包含 %q，实际:\n%s", want, frag)
+		}
+	}
+	if strings.Contains(frag, " ") {
+		t.Errorf("声明片段里不该有空格（调用方靠词分割展开它）:\n%s", frag)
 	}
 }

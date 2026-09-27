@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"runtime"
 	"strings"
 
@@ -64,6 +65,31 @@ func (s ucBinaries) versions(ctx context.Context, cfg plugin.AppConfig, spec app
 	}
 	cfg.Log.Info("查询完成", "app", spec.id, "releases", len(out), "latest", out[0].Version)
 	return out, nil
+}
+
+// hosts 报告这个上游用到的域名。
+//
+//   - 下载：索引页里的直链指向各个贡献者自己的 GitHub Release，所以是 github.com；
+//   - 插件自有：版本索引在索引站，由插件进程自己拉取，宿主拦不住。
+func (s ucBinaries) hosts() (download, pluginOwn []string) {
+	return []string{"github.com"}, []string{hostOf(s.indexBase())}
+}
+
+// indexBase 返回实际会访问的索引站基址（测试会把 s.baseURL 指向本地服务）。
+func (s ucBinaries) indexBase() string {
+	if base := strings.TrimSpace(s.baseURL); base != "" {
+		return base
+	}
+	return ucbinaries.DefaultBaseURL
+}
+
+// hostOf 返回地址的主机名；解析不出来时返回空串。
+func hostOf(rawURL string) string {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // ucNotes 说明这批二进制的信任边界：谁构建的、是不是官方构建。
