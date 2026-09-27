@@ -85,8 +85,11 @@ jobs:
             fi
           }
 
-          # 这个包是发布门禁本身：它比宿主宽松一点，就会把不该发布的清单放出去。
+          # 这两个包直接决定用户装到的是什么，别让它们的测试被顺手漏掉：
+          #   feedcheck  —— 发布门禁本身，比宿主宽松一点就会把不该发的清单放出去；
+          #   ucbinaries —— 从索引站挑产物与摘要，挑错就是给用户装错包。
           check ./internal/feedcheck 70
+          check ./internal/ucbinaries 60
 
           exit $fail
 

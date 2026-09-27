@@ -28,9 +28,13 @@ https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
 ## 目录
 
 ```
-├── cmd/upkit-hub/          官方插件（catalog 模式，一条订阅分发多个软件）
+├── cmd/upkit-hub/          官方插件（catalog 模式：一条订阅分发多个软件）
+│   ├── catalog.go          软件清单：加一个软件 = 加一条 appSpec
+│   ├── source_github.go    上游之一：GitHub Releases
+│   └── source_ucbinaries.go 上游之二：ungoogled-chromium 官方二进制索引站
 ├── cmd/feedcheck/          发布前门禁：校验清单（可选核对产物与下载地址）
 ├── internal/feedcheck/     订阅的解析与校验，以及针对 gen-feed.sh 的测试
+├── internal/ucbinaries/    ungoogled-chromium 索引站的 HTML 解析（带真实页面夹具）
 ├── scripts/
 │   ├── build-plugin.sh     插件构建（交叉编译、注入版本号、发布命名）
 │   ├── gen-feed.sh         清单生成器（扫描产物、现算摘要、检查平台覆盖）
@@ -43,6 +47,49 @@ https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
 宿主那个包在另一个 module 里、Go 不允许引入，所以这里保留一份够用的校验，作用是把
 「宿主一定会拒绝的清单」拦在发布之前。它的两条自缚规则写在包注释里 —— 只允许比宿主
 更严或一致，不发明宿主不认识的字段。
+
+## 订阅里的软件
+
+| id | 上游 | 取哪个产物 |
+| --- | --- | --- |
+| `fzf` | `junegunn/fzf` 的 Releases | `windows_<arch>.zip`（便携版） |
+| `ungoogled-chromium` | [官方二进制索引站](https://ungoogled-software.github.io/ungoogled-chromium-binaries/) | `windows_<arch>.zip`（便携版） |
+| `7zip` | `ip7z/7zip` 的 Releases | `7z*-<arch>.exe`（官方安装器，静默安装） |
+
+`ungoogled-chromium` 的二进制由社区贡献者提交、**不是官方构建**，也无法保证可复现 ——
+索引站首页自己就这么写。这段说明会作为版本备注出现在界面上，并且每个文件都带上站点给的
+SHA256。
+
+## 增加一个软件
+
+一个软件 = `cmd/upkit-hub/catalog.go` 里的一条 `appSpec`：`src` 说明版本与产物从哪个
+上游来，其余字段交给宿主的四条轴。加完软件 → 构建 → 生成清单 → 发版，用户重新拉取订阅
+就能看到它。
+
+上游目前有两种形态：
+
+| `src` | 怎么拿版本与产物 |
+| --- | --- |
+| `githubReleases{repo, asset}` | 查 GitHub Releases，按 `asset` 通配挑包；`{arch}` 会按本机架构展开 |
+| `ucBinaries{platformDirs}` | 读索引站的平台索引页与版本页，挑出便携 zip 及其 SHA256 |
+
+三条容易踩的坑：
+
+- **产物必须按本机架构挑**。宿主只用 `Artifacts[0]`，挑错了没有第二次机会。插件是按架构
+  分别构建的（订阅里同时有 windows/amd64 与 windows/arm64 两份），所以用 `runtime.GOARCH`；
+  上游对架构的叫法不一致时（7-Zip 把 amd64 叫 `x64`）在 `appSpec.arch` 里给映射。
+- **优先便携版而不是安装器**。upkit 自己负责解包、备份与回滚，安装器会绕开这套机制。
+- **尽量带上摘要**。索引站给的 SHA256 会作为 `Artifacts[].Digest` 交给宿主；
+  `PickPortable` 因此宁可不提供某个版本，也不给一个无法校验的下载。
+
+`cmd/upkit-hub/catalog_test.go` 里有几条约束性用例：id 必须合法且唯一、必须声明入口与
+安装路径、`{arch}` 必须按上游命名展开。加软件时它们会替你挡住最低级的错误。
+
+想确认真实上游当下是否接得通（默认跳过，CI 不联网）：
+
+```bash
+UPKIT_HUB_LIVE=1 go test ./internal/ucbinaries/ ./cmd/upkit-hub/ -run Live -v
+```
 
 ## 本地开发
 
