@@ -1,0 +1,188 @@
+name: Publish Release
+
+# 可复用工作流：把插件产物与 feed.yaml 挂到 GitHub Release 上。
+#
+# 与 build-release.yml 同样的用意 —— 演练与真发版共用一份定义。发布这一步出的
+# 事故多半与环境无关（缺 checkout、产物路径写错、gh 参数拼错），跑一遍就能撞出来，
+# 没必要等到打 tag 那一刻。
+#
+# 本工作流**只发 Release**：不打 tag、不构建。产物由调用方构建好并上传为 artifact。
+#
+# 权限由调用方授予：真发版需要 contents: write，演练只需要读。这里不写 permissions
+# 块，以免与调用方的授权范围打架。
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 版本号，也是 tag（形如 v0.1.0 或 v0.2.0-rc.1）
+        required: true
+        type: string
+      prerelease:
+        description: 是否标记为预览版（"true" / "false"）
+        required: false
+        type: string
+        default: "false"
+      artifact-name:
+        description: 从哪个 artifact 取产物
+        required: false
+        type: string
+        default: release-dist
+      dry-run:
+        description: 只演练：校验前置条件与产物，不创建 Release（"true" / "false"）
+        required: false
+        type: string
+        default: "false"
+
+jobs:
+  publish:
+    name: 创建 Release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      PRERELEASE: ${{ inputs.prerelease }}
+      DRY_RUN: ${{ inputs.dry-run }}
+    steps:
+      # 顺序不能反：actions/checkout 默认会 git clean -ffdx，把工作区里未被 git
+      # 跟踪的文件清掉 —— 先下载的产物会被一并删除。
+      #
+      # fetch-depth 0 与 --generate-notes 相关：gh 需要本地历史与 tag 才能算出
+      # changelog 的范围，浅历史会以 "not a git repository" 之类的报错失败。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist
+
+      - name: 校验附件齐全且命名精确
+        run: |
+          set -euo pipefail
+
+          # 内置订阅地址是 .../releases/latest/download/feed.yaml。
+          # 这个附件的名字错一个字，官方源就对全网 404，而且没有任何报错。
+          if [[ ! -f dist/feed.yaml ]]; then
+            echo "::error::缺少 dist/feed.yaml（它必须叫这个名字，且必须是 Release 附件）"
+            exit 1
+          fi
+
+          files=(dist/feed.yaml)
+          missing=0
+          for arch in amd64 arm64; do
+            f="dist/upkit-hub-windows-${arch}.exe"
+            if [[ ! -f "$f" ]]; then
+              echo "::error::缺少产物 $f"
+              missing=1
+              continue
+            fi
+            files+=("$f")
+          done
+          (( missing == 0 )) || exit 1
+
+          # 反向检查：多出来的附件会让「哪个才是官方清单」变得含糊，一律不收。
+          shopt -s nullglob
+          for f in dist/*; do
+            case "$f" in
+              dist/feed.yaml|dist/upkit-hub-windows-amd64.exe|dist/upkit-hub-windows-arm64.exe) ;;
+              *) echo "::error::多出未预期的附件 $f"; exit 1 ;;
+            esac
+          done
+
+          printf '%s\n' "${files[@]}" >/tmp/release-files.txt
+          echo "待上传附件："
+          cat /tmp/release-files.txt
+
+      - name: 再校验一次清单与产物一致
+        # 防的是 artifact 上传/下载这一段引入的失真：摘要与文件必须是同一次构建的。
+        run: |
+          set -euo pipefail
+          go run ./cmd/feedcheck -feed dist/feed.yaml -artifacts dist
+
+      - name: 发布
+        run: |
+          set -euo pipefail
+
+          # 前置条件单独报错，比 gh 自己抛 "not a git repository" 好定位。
+          if ! git rev-parse --git-dir >/dev/null 2>&1; then
+            echo "::error::工作目录不是 git 仓库，gh --generate-notes 无法解析 changelog 范围；本 job 缺少 actions/checkout"
+            exit 1
+          fi
+
+          mapfile -t files </tmp/release-files.txt
+
+          if [[ "$DRY_RUN" == "true" ]]; then
+            {
+              echo "### 发布演练 $VERSION"
+              echo
+              echo "前置条件与产物校验通过，未创建 Release。"
+              echo
+              echo '```'
+              echo "预览版: $PRERELEASE"
+              printf '待上传 %d 个附件:\n' "${#files[@]}"
+              printf '  %s\n' "${files[@]}"
+              echo '```'
+            } >>"$GITHUB_STEP_SUMMARY"
+            echo "演练通过：$VERSION，${#files[@]} 个附件齐全"
+            exit 0
+          fi
+
+          notes_args=(--generate-notes)
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            # 重跑：附件覆盖、notes 重新生成，不影响已存在的 tag。
+            echo "Release $VERSION 已存在，更新附件与 changelog"
+            gh release upload "$VERSION" "${files[@]}" --clobber
+            gh release edit "$VERSION" "${notes_args[@]}"
+          else
+            create_args=("$VERSION" --title "$VERSION" --verify-tag "${notes_args[@]}")
+            # 注意不能写成 `[[ ... ]] && create_args+=(...)`：条件为假时整条语句
+            # 返回非 0，在 set -e 下会让这一步直接结束。
+            if [[ "$PRERELEASE" == "true" ]]; then
+              create_args+=(--prerelease)
+            fi
+            gh release create "${create_args[@]}" "${files[@]}"
+          fi
+
+          # 事后复核。gh 有可能什么都没做成却退出 0（权限不足、仓库功能受限等），
+          # 那样这盏绿灯是假的；用 API 确认一次，把这种情况变成明确的失败。
+          if ! gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}" >/dev/null 2>&1; then
+            echo "::error::${VERSION} 的 Release 不存在或不可读；gh 报了成功但实际没发布"
+            exit 1
+          fi
+
+          # feed.yaml 必须真的在附件列表里 —— 官源能不能用，全看这一条。
+          if ! gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}" \
+              --jq '.assets[].name' | grep -qxF 'feed.yaml'; then
+            echo "::error::${VERSION} 的 Release 里没有 feed.yaml 附件"
+            exit 1
+          fi
+
+          # 正式版还要确认它就是 latest：内置地址读的是 releases/latest/download，
+          # 只有当这次发布是最新正式版时，用户才会拿到它。
+          # （预览版不进 latest，所以这里只在非预览版时校验。）
+          if [[ "$PRERELEASE" != "true" ]]; then
+            latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')"
+            if [[ "$latest" != "$VERSION" ]]; then
+              echo "::error::releases/latest 指向 ${latest}，不是本次发布的 ${VERSION}；内置订阅地址会读到旧清单"
+              exit 1
+            fi
+          fi
+
+          {
+            echo "### 已发布 $VERSION"
+            echo
+            echo "预览版: $PRERELEASE"
+            echo
+            echo '```'
+            printf '%s\n' "${files[@]}"
+            echo "内置订阅地址: https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/feed.yaml"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"

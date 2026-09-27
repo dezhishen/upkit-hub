@@ -1,0 +1,122 @@
+# upkit-hub
+
+> upkit 的官方插件库：托管插件制品与订阅清单 `feed.yaml`。
+
+upkit 主仓库只做平台本体，另外把一个订阅地址编进二进制；插件的**制品**与**清单**都由
+本仓库发布。两者分开是有原因的：清单里按平台写死了产物地址与 sha256，必须与某一次
+插件发布严格对应 —— 留在主仓库会跟代码提交搅在一起被顺手改掉，让已发布版本的行为
+跟着漂移。
+
+## 内置订阅地址
+
+```
+https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
+```
+
+这个字符串已经编进 upkit 的二进制（`internal/pluginfeed/builtin.go`），改不了，于是就
+有了本仓库的几条铁律：
+
+| 铁律 | 原因 |
+| --- | --- |
+| `feed.yaml` 必须是 Release 附件，**文件名精确为 `feed.yaml`** | 上门的地址直指这个附件名，错一个字符就是全网 404，且没有任何报错 |
+| 每更新一次清单就要发一个 Release | 附件属于某一次 Release，没有别的挂载点 |
+| 产物地址形如 `.../releases/download/<tag>/<插件ID>-windows-<arch>.exe` | 与附件实际所在位置一致；`--base-url` 按 tag 拼，不能按 `latest` 拼 |
+| 每个插件必须覆盖 `windows/amd64` 与 `windows/arm64` | 漏一个架构，那个架构的用户会在「校验订阅」这一步失败，而这本可以在发布前发现 |
+| sha256 / size 由脚本构建后现算 | 手工填摘要迟早会错，而错的摘要等于装不上 |
+| 预览版用 `-rc.N` / `-beta.N` 后缀 | `releases/latest` 不含 prerelease，所以发预览版不会改变用户读到的清单 |
+
+## 目录
+
+```
+├── cmd/upkit-hub/          官方插件（catalog 模式，一条订阅分发多个软件）
+├── cmd/feedcheck/          发布前门禁：校验清单（可选核对产物与下载地址）
+├── internal/feedcheck/     订阅的解析与校验，以及针对 gen-feed.sh 的测试
+├── scripts/
+│   ├── build-plugin.sh     插件构建（交叉编译、注入版本号、发布命名）
+│   ├── gen-feed.sh         清单生成器（扫描产物、现算摘要、检查平台覆盖）
+│   ├── serve-feed.sh       本地 https 静态服务（自签证书，免 root）
+│   └── check-headers.sh    文件头检查（package 唯一、//go:build 在第 1 行）
+└── .github/workflows/      CI、构建、发布
+```
+
+`internal/feedcheck` 是宿主 `internal/pluginfeed` 的**最小复刻**，不是第二份权威：
+宿主那个包在另一个 module 里、Go 不允许引入，所以这里保留一份够用的校验，作用是把
+「宿主一定会拒绝的清单」拦在发布之前。它的两条自缚规则写在包注释里 —— 只允许比宿主
+更严或一致，不发明宿主不认识的字段。
+
+## 本地开发
+
+```bash
+make check                 # 格式化 + 文件头 + vet + 测试
+make release-local BASE_URL=https://127.0.0.1:8443
+                           # 构建两个架构的插件 → 生成 dist/release/feed.yaml → 校验
+```
+
+产物都落在 `dist/`：
+
+```
+dist/plugins/upkit-hub-windows-amd64.exe     构建原始输出
+dist/plugins/upkit-hub-windows-arm64.exe
+dist/release/feed.yaml                       清单（发布的就是这个文件）
+dist/release/upkit-hub-windows-*.exe         与清单同一次构建的产物
+dist/serve/ca.crt                            本地自签证书
+```
+
+### 在 upkit 里装一遍
+
+宿主的订阅地址解析**拒绝明文 http**（明文链路中间任何人都能整份替换清单，而清单自带的
+sha256 保护不了清单自己），所以本地服务也必须是 https。自签证书不需要 root —— upkit
+是 Go 程序，认 `SSL_CERT_FILE`：
+
+```bash
+# 1) 本仓库：起本地 https 服务（前台运行，Ctrl-C 结束）
+make release-local BASE_URL=https://127.0.0.1:8443
+make serve
+
+# 2) 另一个终端：先用 curl 确认拉得到
+curl --cacert dist/serve/ca.crt https://127.0.0.1:8443/feed.yaml
+
+# 3) upkit 仓库：构建开发版，并把自签证书交给它
+cd /path/to/upkit && make build-dev
+SSL_CERT_FILE=/path/to/upkit-hub/dist/serve/ca.crt ./dist/upkit-dev
+```
+
+然后在 upkit 的「来源」面板按 <kbd>a</kbd> 填入 `https://127.0.0.1:8443/feed.yaml`，
+确认信任 `127.0.0.1`，进入详情按 <kbd>enter</kbd> 安装。
+
+> 插件产物是 Windows 可执行文件，在 Linux/macOS 上**装得上但起不来**：下载、摘要校验、
+> 落盘 `plugin/upkit-hub.exe` 与 `plugin/upkit-hub.plugin.yaml` 都能完成，真正运行插件
+> 得在 Windows 上。
+
+不想开界面时，也可以只用仓库内的门禁核对（含逐个下载产物核对摘要）：
+
+```bash
+make verify                # 校验 dist/release，并下载清单里的每个包比对摘要
+```
+
+## 发布
+
+打 tag 即发布，走 `.github/workflows/release.yml`：
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0     # 正式版：会更新 releases/latest
+git tag v0.2.0-rc.1 && git push origin v0.2.0-rc.1   # 预览版：不影响用户读到的清单
+```
+
+流水线做四件事：
+
+1. **verify**：gofmt / 文件头 / vet / 测试（与 CI 同一套门禁）；
+2. **build**：交叉编译两个架构 → 生成 `feed.yaml` → `feedcheck` 校验清单与产物逐字节一致
+   → 确认产物是 PE 文件、版本号确实注入了（`-ldflags -X` 写错符号路径不会报错，
+   只会静默保留 `dev`）；
+3. **publish**：上传 `feed.yaml` 与两个 exe，随后用 API 复核附件真的在、且正式版确实是
+   `releases/latest` 指向的那个（`gh` 有可能什么都没做却退出 0）；
+4. 全程与 `ci.yml` 的发布演练共用同一份定义 —— `main` 上是绿的，就意味着现在能发版。
+
+清单格式、插件开发、信任模型的完整说明见 upkit 的
+[`docs/plugin-subscription.md`](https://github.com/dezhishen/upkit/blob/main/docs/plugin-subscription.md)
+与 [`docs/plugin-dev.md`](https://github.com/dezhishen/upkit/blob/main/docs/plugin-dev.md)。
+
+## 许可证
+
+MIT

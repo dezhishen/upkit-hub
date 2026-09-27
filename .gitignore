@@ -1,0 +1,21 @@
+# 构建产物
+/dist/
+/release/
+*.exe
+
+# 本地静态服务器用的自签证书私钥
+/server.key
+
+# Go
+coverage.out
+/upkit-hub
+/feedcheck
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+
+# 本地工作区文件（指向同级 upkit 检出，不入库）
+go.work
+go.work.sum

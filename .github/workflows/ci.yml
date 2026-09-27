@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 测试与静态检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: 显示 Go 版本
+        run: go version
+
+      - name: gofmt 检查
+        run: |
+          # 注意不能写成 unformatted="$(gofmt -l .)"：语法错误时 gofmt 返回非 0，
+          # 但退出码会被命令替换吞掉，检查反而“通过”。
+          if ! unformatted="$(gofmt -l .)"; then
+            echo "gofmt 解析失败（通常是语法错误，比如重复的 package 行）"
+            exit 1
+          fi
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化，请运行 gofmt -w："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: 文件头检查
+        run: bash scripts/check-headers.sh
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: 单元测试
+        # 这里包含发布链路的关键用例：gen_feed_test.go 会真的跑一遍
+        # scripts/gen-feed.sh，断言它生成的清单能被宿主解析、通过校验，且摘要与
+        # 产物逐字节一致 —— 「一键添加官方源」的可用性就压在这几条上。
+        #
+        # -count=1 关掉结果缓存（命中缓存时测试根本没跑却会报绿），
+        # -timeout 防止某个用例卡死把 job 拖到 GitHub 的 6 小时上限。
+        run: go test -race -count=1 -timeout 15m -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: 覆盖率摘要
+        run: |
+          go tool cover -func=coverage.out | tail -1
+          echo "### 各包覆盖率" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go test -count=1 -cover ./... 2>/dev/null | grep -v "no test files" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 关键包覆盖率门禁
+        run: |
+          set -u
+          fail=0
+          check() {
+            pkg="$1"; min="$2"
+            cov=$(go test -count=1 -cover "$pkg" 2>/dev/null | sed -n 's/.*coverage: \([0-9.]*\)%.*/\1/p')
+            if [ -z "$cov" ]; then
+              echo "::error file=$pkg::拿不到覆盖率（包不存在或测试无法运行）"
+              fail=1
+              return
+            fi
+            printf '%-28s %6s%%（下限 %s%%）\n' "$pkg" "$cov" "$min"
+            if ! awk -v c="$cov" -v m="$min" 'BEGIN{exit !(c+0 >= m+0)}'; then
+              echo "::error file=$pkg::覆盖率 $cov% 低于下限 $min%"
+              fail=1
+            fi
+          }
+
+          # 这个包是发布门禁本身：它比宿主宽松一点，就会把不该发布的清单放出去。
+          check ./internal/feedcheck 70
+
+          exit $fail
+
+      - name: 上传覆盖率
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: ignore
+
+  smoke:
+    name: 发布演练（不推 Release）
+    needs: test
+    # 与真发版共用同一份构建定义（build-release.yml），所以「main 上是绿的」就
+    # 意味着「现在能发版」—— 两个架构的交叉编译、清单生成与校验都在这里提前验过。
+    #
+    # 产物传到 artifact 供下载核对；本工作流不碰 tag、不碰 Release。
+    uses: ./.github/workflows/build-release.yml
+    with:
+      # 演练版本：合法 semver，且一眼能看出不是真版本。
+      version: v0.0.0-dev.${{ github.sha }}
+      artifact-name: release-smoke
+
+  publish-smoke:
+    name: 发布演练（不创建 Release）
+    needs: smoke
+    # 发布这一步同样与真发版共用一份定义（publish-release.yml）。
+    # 附件名写错（比如 feed.yaml 变成了 feed.yml）这类问题只有跑到发布才会暴露，
+    # 而它恰好是内置订阅地址最不能出错的一环。
+    uses: ./.github/workflows/publish-release.yml
+    with:
+      version: v0.0.0-dev.${{ github.sha }}
+      artifact-name: release-smoke
+      dry-run: "true"

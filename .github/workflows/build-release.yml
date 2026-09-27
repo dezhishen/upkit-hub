@@ -1,0 +1,143 @@
+name: Build Release Artifacts
+
+# 可复用工作流：构建插件产物并生成订阅清单 feed.yaml。
+#
+# 它被两处调用，共用同一份定义，避免两条路径各写一遍后悄悄漂移：
+#   · ci.yml      —— main 上的发布演练，产物进 artifact 供下载核对，不发 Release
+#   · release.yml —— 真发版，产物交给 publish job 上传到 Release
+#
+# 本工作流**只构建**：不碰 tag、不碰 Release。
+#
+# 两条约束来自宿主里写死的订阅地址
+# （https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml）：
+#   1. 清单必须叫 feed.yaml，且是 Release 附件；
+#   2. 清单里的产物地址必须是 .../releases/download/<tag>/<插件ID>-windows-<arch>.exe，
+#      所以 --base-url 要按本次 tag 拼，而不是按分支或 latest 拼。
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 版本号，也是 tag（形如 v0.1.0 或 v0.2.0-rc.1）
+        required: true
+        type: string
+      artifact-name:
+        description: 上传产物时使用的 artifact 名
+        required: false
+        type: string
+        default: release-dist
+      base-url:
+        description: 清单里产物地址的前缀；留空按本仓库该 tag 的 release 下载地址拼
+        required: false
+        type: string
+        default: ""
+      min-host-version:
+        description: 要求的最低宿主版本（留空则不写该字段）
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 构建插件与清单
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: 计算插件版本（tag 去掉 v 前缀）
+        id: ver
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # 宿主拒绝以符号开头、或含其它字符的版本号（它会被拼进缓存文件名），
+          # 这里提前把不合规的 tag 拦下来。
+          if [[ ! "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]]; then
+            echo "::error::版本号 ${version} 不合规（由 tag ${TAG} 得出）"
+            exit 1
+          fi
+          echo "version=${version}" >>"$GITHUB_OUTPUT"
+
+      - name: 构建 windows/amd64 与 windows/arm64
+        env:
+          PLUGIN_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # 两个架构都必须构建：漏一个架构，那个架构的用户会在「校验订阅」
+          # 这一步失败，而 gen-feed.sh 也会因此拒绝生成清单。
+          for target in windows/amd64 windows/arm64; do
+            bash scripts/build-plugin.sh --release-name -v "$PLUGIN_VERSION" \
+              -t "$target" ./cmd/upkit-hub
+          done
+          ls -l dist/plugins
+
+      - name: 生成清单
+        env:
+          PLUGIN_VERSION: ${{ steps.ver.outputs.version }}
+          INPUT_BASE_URL: ${{ inputs.base-url }}
+          MIN_HOST: ${{ inputs.min-host-version }}
+        run: |
+          set -euo pipefail
+          base_url="${INPUT_BASE_URL:-https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}}"
+          echo "产物地址前缀: ${base_url}"
+
+          mkdir -p dist/release
+          # 产物与清单放同一目录：摘要由脚本现算，摆在一起就不会出现
+          # 「算的是 A 目录、发的是 B 目录」这种错。
+          cp dist/plugins/*.exe dist/release/
+
+          args=(
+            --plugins-dir dist/release
+            --version "$PLUGIN_VERSION"
+            --base-url "$base_url"
+            --name "upkit-hub=upkit 官方插件集"
+            -n "upkit 官方源"
+            -o dist/release/feed.yaml
+          )
+          if [[ -n "$MIN_HOST" ]]; then
+            args+=(--min-host-version "$MIN_HOST")
+          fi
+          bash scripts/gen-feed.sh "${args[@]}"
+          echo "--- feed.yaml ---"
+          cat dist/release/feed.yaml
+
+      - name: 校验清单（宿主同一套规则 + 与产物逐字节比对）
+        run: |
+          set -euo pipefail
+          go run ./cmd/feedcheck -feed dist/release/feed.yaml -artifacts dist/release
+
+      - name: 确认产物是 Windows 可执行文件且版本已注入
+        env:
+          PLUGIN_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          for f in dist/release/*.exe; do
+            if ! file "$f" | grep -q 'PE32'; then
+              echo "::error::$f 不是 Windows 可执行文件"
+              exit 1
+            fi
+            # -ldflags -X main.version=... 注入的是明文字符串，能直接 grep 到。
+            # 符号路径写错时 -X 不会报错、只会静默保留 dev，这里正好把它抓出来。
+            if ! grep -aq "$PLUGIN_VERSION" "$f"; then
+              echo "::error::$f 里找不到版本号 $PLUGIN_VERSION，-X main.version 可能没生效"
+              exit 1
+            fi
+          done
+          ls -l dist/release
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          # 清单必须原样叫 feed.yaml：它是内置订阅地址指向的那个附件名。
+          path: dist/release/*

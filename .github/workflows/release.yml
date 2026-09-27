@@ -1,0 +1,129 @@
+name: Release
+
+# 发布官方源：构建两个架构的插件 → 生成 feed.yaml → 一起挂到 Release 上。
+#
+# 为什么每更新一次清单就要发一个 release：宿主里写死的订阅地址是
+#
+#   https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
+#
+# 清单只能是附件，而附件属于某一次 Release。
+#
+# 预览版不会影响用户读到的清单：releases/latest 不含 prerelease，所以带
+# -rc.N / -beta.N 后缀的 tag 发出来只是多了个可下载的版本，官方源的指向不变。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 版本号（形如 v0.2.0 或 v0.2.1-rc.1）
+        required: true
+        type: string
+      dry-run:
+        description: 只演练：走完校验与构建，但不创建 Release
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  # 同一版本不并发发布：Release 是「清单 + 产物」的一致性快照，两次发布交错
+  # 会让用户读到与产物不匹配的清单。
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: 发布前门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: gofmt 检查
+        run: |
+          if ! unformatted="$(gofmt -l .)"; then
+            echo "gofmt 解析失败（通常是语法错误，比如重复的 package 行）"
+            exit 1
+          fi
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化："; echo "$unformatted"; exit 1
+          fi
+
+      - name: 文件头检查
+        run: bash scripts/check-headers.sh
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: 单元测试
+        run: go test -count=1 -timeout 15m ./...
+
+  version:
+    name: 确定版本号
+    needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - name: 计算版本号
+        id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT" == "workflow_dispatch" ]]; then
+            version="$INPUT_VERSION"
+          else
+            version="$REF_NAME"
+          fi
+          if [[ ! "$version" =~ ^v[0-9] ]]; then
+            echo "::error::版本号 ${version} 必须以 v 开头并跟数字（形如 v0.2.0）"
+            exit 1
+          fi
+          echo "版本号: $version"
+
+          # 预览版：tag 带 -rc.N / -beta.N 这类后缀。它不影响 releases/latest，
+          # 因此不会改变官方源指向的清单。
+          prerelease=false
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          fi
+
+          {
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >>"$GITHUB_OUTPUT"
+
+  build:
+    name: 构建插件与清单
+    needs: version
+    # 与 CI 上的发布演练共用同一份定义：演练绿的，这里就不会有意外。
+    uses: ./.github/workflows/build-release.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      artifact-name: release-dist
+
+  publish:
+    name: 创建 Release
+    needs: [version, build]
+    if: ${{ !inputs.dry-run }}
+    # 同样与演练共用一份定义。publish 是幂等的（附件 --clobber 覆盖），重跑安全。
+    uses: ./.github/workflows/publish-release.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      prerelease: ${{ needs.version.outputs.prerelease }}
+      artifact-name: release-dist
+      dry-run: "false"
