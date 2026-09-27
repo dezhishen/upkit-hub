@@ -32,6 +32,7 @@ func main() {
 type options struct {
 	feedPath    string
 	artifacts   string
+	feedURL     string
 	hostVersion string
 	checkURLs   bool
 	insecure    bool
@@ -42,6 +43,7 @@ func run() error {
 	var opt options
 	flag.StringVar(&opt.feedPath, "feed", "dist/release/feed.yaml", "订阅清单路径")
 	flag.StringVar(&opt.artifacts, "artifacts", "", "产物目录；给了就核对清单里的文件名与摘要")
+	flag.StringVar(&opt.feedURL, "feed-url", "", "清单自己的地址；清单里写了相对产物地址（./<文件>）时用它解析")
 	flag.StringVar(&opt.hostVersion, "host-version", "", "模拟的宿主版本，用于校验 min_host_version（留空表示不校验）")
 	flag.BoolVar(&opt.checkURLs, "check-urls", false, "逐个下载清单里的包并核对摘要（需要网络）")
 	flag.BoolVar(&opt.insecure, "insecure", false, "下载时不校验证书（仅用于本地自签 https 调试）")
@@ -86,7 +88,7 @@ func run() error {
 			client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 			fmt.Println("    （已关闭证书校验，仅用于本地自签 https）")
 		}
-		if err := feed.VerifyURLs(ctx, client); err != nil {
+		if err := feed.VerifyURLs(ctx, client, opt.feedURL); err != nil {
 			return fmt.Errorf("地址核对失败: %w", err)
 		}
 		fmt.Println("==> 地址核对通过：清单里的每个包都能下到，且内容与摘要一致")

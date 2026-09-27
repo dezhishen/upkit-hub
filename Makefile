@@ -25,11 +25,17 @@ RELEASE_DIR    := $(DIST)/release
 VERSION        ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo v0.0.0-dev)
 PLUGIN_VERSION  = $(patsubst v%,%,$(VERSION))
 
-# 清单里产物地址的前缀。CI 里指向本仓库该 tag 的 release 下载地址；
-# 本地验证时覆盖成自签 https 服务的地址：
+# 清单里产物地址的形态：默认写成相对形式（./<文件>），由宿主相对**订阅地址**解析。
+# 内置订阅地址是 .../releases/latest/download/feed.yaml，于是相对地址正好落在同一次
+# 发布里 —— 同源，用户不需要额外确认「下载域名」，也自然跟着最新发布走。
 #
-#   make release-local BASE_URL=https://127.0.0.1:8443
-BASE_URL ?= https://github.com/dezhishen/upkit-hub/releases/download/$(VERSION)
+# 需要绝对地址时（自建分发、内网镜像）在命令行给 BASE_URL：
+#   make feed BASE_URL=https://cdn.example.com/upkit-hub
+BASE_URL ?=
+URL_ARGS = $(if $(BASE_URL),--base-url $(BASE_URL),--relative)
+
+# 核对相对地址时用来解析的清单地址（默认本地自签 https 源）。
+FEED_URL ?= https://127.0.0.1:8443/feed.yaml
 
 FEED_NAME   ?= upkit 官方源
 PLUGIN_NAME ?= $(PLUGIN_ID)=upkit 官方插件集
@@ -77,7 +83,7 @@ feed: plugins ## 组装 dist/release/ 并生成清单 feed.yaml
 	@cp $(PLUGINS_DIR)/*.exe $(RELEASE_DIR)/
 	bash scripts/gen-feed.sh --plugins-dir $(RELEASE_DIR) \
 		--version "$(PLUGIN_VERSION)" \
-		--base-url "$(BASE_URL)" \
+		$(URL_ARGS) \
 		--name "$(PLUGIN_NAME)" \
 		-n "$(FEED_NAME)" \
 		-o $(RELEASE_DIR)/feed.yaml
@@ -87,7 +93,7 @@ release-local: feed ## 本地走一遍发布：构建 + 清单 + 校验
 
 verify: ## 校验 dist/release（含逐个下载清单里的包核对摘要）
 	$(GO) run ./cmd/feedcheck -feed $(RELEASE_DIR)/feed.yaml \
-		-artifacts $(RELEASE_DIR) -check-urls -insecure
+		-artifacts $(RELEASE_DIR) -feed-url $(FEED_URL) -check-urls -insecure
 
 serve: ## 起本地 https 静态服务（自签证书），把 dist/release 暴露给 upkit
 	bash scripts/serve-feed.sh

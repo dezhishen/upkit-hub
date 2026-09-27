@@ -11,8 +11,10 @@ name: Build Release Artifacts
 # 两条约束来自宿主里写死的订阅地址
 # （https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml）：
 #   1. 清单必须叫 feed.yaml，且是 Release 附件；
-#   2. 清单里的产物地址必须是 .../releases/download/<tag>/<插件ID>-windows-<arch>.exe，
-#      所以 --base-url 要按本次 tag 拼，而不是按分支或 latest 拼。
+#   2. 清单里的产物地址写成相对形式（./<文件>），由宿主相对**订阅地址**解析。
+#      内置地址取的是同一次发布里的 feed.yaml，因此解析结果落在同一次发布的产物上：
+#      同源（用户不必额外确认「下载域名」），也不必把 tag 写进清单 —— 写死 tag 反而会让
+#      订阅地址与产物地址指向两次不同的发布（latest 的清单 + 旧 tag 的产物）。
 
 on:
   workflow_call:
@@ -27,7 +29,7 @@ on:
         type: string
         default: release-dist
       base-url:
-        description: 清单里产物地址的前缀；留空按本仓库该 tag 的 release 下载地址拼
+        description: 产物地址的绝对前缀（自建分发、内网镜像时用）；留空则写成相对形式 ./<文件>
         required: false
         type: string
         default: ""
@@ -88,8 +90,6 @@ jobs:
           MIN_HOST: ${{ inputs.min-host-version }}
         run: |
           set -euo pipefail
-          base_url="${INPUT_BASE_URL:-https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}}"
-          echo "产物地址前缀: ${base_url}"
 
           mkdir -p dist/release
           # 产物与清单放同一目录：摘要由脚本现算，摆在一起就不会出现
@@ -99,11 +99,18 @@ jobs:
           args=(
             --plugins-dir dist/release
             --version "$PLUGIN_VERSION"
-            --base-url "$base_url"
             --name "upkit-hub=upkit 官方插件集"
             -n "upkit 官方源"
             -o dist/release/feed.yaml
           )
+          if [[ -n "$INPUT_BASE_URL" ]]; then
+            echo "产物地址前缀: ${INPUT_BASE_URL}（绝对地址）"
+            args+=(--base-url "$INPUT_BASE_URL")
+          else
+            # 默认相对形式：解析发生在用户拿到的订阅地址上，因此与订阅天然同源。
+            echo "产物地址: 相对（./<文件>）"
+            args+=(--relative)
+          fi
           if [[ -n "$MIN_HOST" ]]; then
             args+=(--min-host-version "$MIN_HOST")
           fi

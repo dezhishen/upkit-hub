@@ -232,6 +232,11 @@ func (pkg Package) validate() error {
 	if strings.TrimSpace(pkg.URL) == "" {
 		return fmt.Errorf("缺少 url")
 	}
+	// 协议相对地址（//host/x）长得像相对路径，解析后却会换域 —— 等于把下载指向别处。
+	// 宿主明确拒绝这种写法，这里也把它拦在发布之前。
+	if strings.HasPrefix(strings.TrimSpace(pkg.URL), "//") {
+		return fmt.Errorf("url 不能写成协议相对地址（%s）：解析后会换域，应写成绝对地址或 ./<文件>", pkg.URL)
+	}
 	// sha256 是强制的：订阅等于远程代码执行授权，没有哈希就无法判断下载到的东西。
 	if !ValidSHA256(pkg.SHA256) {
 		return fmt.Errorf("缺少合法的 sha256（插件包必须提供 64 位十六进制摘要）")

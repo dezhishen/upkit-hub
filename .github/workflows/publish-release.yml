@@ -174,6 +174,19 @@ jobs:
               echo "::error::releases/latest 指向 ${latest}，不是本次发布的 ${VERSION}；内置订阅地址会读到旧清单"
               exit 1
             fi
+
+            # 清单里的产物地址是相对的（./<文件>），由宿主相对订阅地址解析 —— 也就是说
+            # 用户实际取的是 .../releases/latest/download/<插件>.exe。这条路必须真的通，
+            # 否则「装得上」只存在于我们的想象里。用 Range 只取第一个字节，不下载整个包。
+            for asset in upkit-hub-windows-amd64.exe upkit-hub-windows-arm64.exe; do
+              url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/${asset}"
+              code="$(curl -sSL -o /dev/null -w '%{http_code}' --range 0-0 --max-time 120 "$url" || true)"
+              if [[ "$code" != "200" && "$code" != "206" ]]; then
+                echo "::error::${url} 返回 HTTP ${code}；清单里的相对地址会解析到这里，用户会下不到产物"
+                exit 1
+              fi
+              echo "相对地址解析验证通过：${url} -> HTTP ${code}"
+            done
           fi
 
           {

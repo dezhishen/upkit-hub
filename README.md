@@ -20,7 +20,7 @@ https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
 | --- | --- |
 | `feed.yaml` 必须是 Release 附件，**文件名精确为 `feed.yaml`** | 上门的地址直指这个附件名，错一个字符就是全网 404，且没有任何报错 |
 | 每更新一次清单就要发一个 Release | 附件属于某一次 Release，没有别的挂载点 |
-| 产物地址形如 `.../releases/download/<tag>/<插件ID>-windows-<arch>.exe` | 与附件实际所在位置一致；`--base-url` 按 tag 拼，不能按 `latest` 拼 |
+| 产物地址写成**相对形式** `./<插件ID>-windows-<arch>.exe` | 由宿主相对**订阅地址**解析：内置地址取的是同一次发布里的 `feed.yaml`，于是产物地址也落在同一次发布上 —— 同源（用户不必额外确认「下载域名」），且不必把 tag 写进清单。**必须带 `./`**：以 `/` 开头是「相对 origin 根」，会变成 `https://github.com/<文件>`，那是 404 |
 | 每个插件必须覆盖 `windows/amd64` 与 `windows/arm64` | 漏一个架构，那个架构的用户会在「校验订阅」这一步失败，而这本可以在发布前发现 |
 | sha256 / size 由脚本构建后现算 | 手工填摘要迟早会错，而错的摘要等于装不上 |
 | 预览版用 `-rc.N` / `-beta.N` 后缀 | `releases/latest` 不含 prerelease，所以发预览版不会改变用户读到的清单 |
@@ -95,8 +95,15 @@ UPKIT_HUB_LIVE=1 go test ./internal/ucbinaries/ ./cmd/upkit-hub/ -run Live -v
 
 ```bash
 make check                 # 格式化 + 文件头 + vet + 测试
-make release-local BASE_URL=https://127.0.0.1:8443
-                           # 构建两个架构的插件 → 生成 dist/release/feed.yaml → 校验
+make release-local         # 构建两个架构的插件 → 生成 dist/release/feed.yaml → 校验
+```
+
+清单里的产物地址默认是相对的（`./<文件>`）：它由宿主相对订阅地址解析，所以同一份
+`feed.yaml` 在本地自签服务、在 GitHub Release 上都成立。要给绝对地址（自建分发、
+内网镜像）时加 `BASE_URL`：
+
+```bash
+make feed BASE_URL=https://cdn.example.com/upkit-hub
 ```
 
 产物都落在 `dist/`：
@@ -117,7 +124,7 @@ sha256 保护不了清单自己），所以本地服务也必须是 https。自�
 
 ```bash
 # 1) 本仓库：起本地 https 服务（前台运行，Ctrl-C 结束）
-make release-local BASE_URL=https://127.0.0.1:8443
+make release-local
 make serve
 
 # 2) 另一个终端：先用 curl 确认拉得到

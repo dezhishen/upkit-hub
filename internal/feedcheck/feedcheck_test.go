@@ -95,6 +95,11 @@ plugins:
 		{"摘要太短", strings.Replace(valid, `sha256: "`+sha+`"`, `sha256: "abc"`, 1), "sha256"},
 		{"摘要非法字符", strings.Replace(valid, `sha256: "`+sha+`"`, `sha256: "`+strings.Repeat("z", 64)+`"`, 1), "sha256"},
 		{"版本号带路径", strings.Replace(valid, "version: 1.0.0", `version: "../../x"`, 1), "version"},
+		{
+			"协议相对地址",
+			strings.Replace(valid, "https://example.com/demo-windows-amd64.exe", "//evil.example.com/demo-windows-amd64.exe", 1),
+			"协议相对",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -297,7 +302,7 @@ plugins:
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
-	if err := feed.VerifyURLs(context.Background(), srv.Client()); err != nil {
+	if err := feed.VerifyURLs(context.Background(), srv.Client(), srv.URL+"/feed.yaml"); err != nil {
 		t.Fatalf("内容与摘要一致时不应报错: %v", err)
 	}
 
@@ -307,7 +312,7 @@ plugins:
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
-	if err := feedWrong.VerifyURLs(context.Background(), srv.Client()); err == nil {
+	if err := feedWrong.VerifyURLs(context.Background(), srv.Client(), srv.URL+"/feed.yaml"); err == nil {
 		t.Fatal("下载内容与摘要不符时必须报错")
 	}
 
@@ -317,8 +322,119 @@ plugins:
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
-	if err := feedMissing.VerifyURLs(context.Background(), srv.Client()); err == nil {
+	if err := feedMissing.VerifyURLs(context.Background(), srv.Client(), srv.URL+"/feed.yaml"); err == nil {
 		t.Fatal("附件不存在时必须报错")
+	}
+}
+
+// 相对地址（./<文件>）必须相对**清单位置**解析 —— 这正是内置订阅地址能直接用的原因：
+// .../releases/latest/download/feed.yaml 与同一次发布的产物同源。
+func TestResolveURL(t *testing.T) {
+	const feed = "https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml"
+	cases := []struct {
+		name    string
+		feedURL string
+		raw     string
+		want    string
+		wantErr string
+	}{
+		{
+			name: "绝对地址原样返回",
+			raw:  "https://cdn.example.com/x.exe", want: "https://cdn.example.com/x.exe",
+		},
+		{
+			name:    "相对地址相对清单位置解析",
+			feedURL: feed, raw: "./x.exe",
+			want: "https://github.com/dezhishen/upkit-hub/releases/latest/download/x.exe",
+		},
+		{
+			name:    "不带 ./ 的相对地址同样成立",
+			feedURL: feed, raw: "x.exe",
+			want: "https://github.com/dezhishen/upkit-hub/releases/latest/download/x.exe",
+		}, {
+			// 这条锁住 gen-feed.sh 为何必须写 ./ 而非 /：以 / 开头是「相对 origin 根」，
+			// 不是相对清单目录。对发布布局而言它会变成 https://github.com/x.exe —— 404。
+			// 已在 upkit 侧用它的 ResolveLocation 实测确认，两边语义一致。
+			name:    "根相对是相对 origin 根，不是清单目录",
+			feedURL: feed, raw: "/x.exe",
+			want: "https://github.com/x.exe",
+		}, {
+			name:    "协议相对地址会换域，必须拒绝",
+			feedURL: feed, raw: "//evil.example.com/x.exe",
+			wantErr: "不同源",
+		},
+		{
+			name: "没有清单位置就解析不了相对地址",
+			raw:  "./x.exe", wantErr: "-feed-url",
+		},
+		{
+			name:    "不支持的协议",
+			raw:     "ftp://example.com/x.exe",
+			wantErr: "http/https",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ResolveURL(c.feedURL, c.raw)
+			if c.wantErr != "" {
+				if err == nil {
+					t.Fatalf("应当报错（期望提到 %q），实际得到 %q", c.wantErr, got)
+				}
+				if !strings.Contains(err.Error(), c.wantErr) {
+					t.Fatalf("错误信息应提到 %q，实际: %v", c.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("不应报错: %v", err)
+			}
+			if got != c.want {
+				t.Fatalf("解析为 %q，期望 %q", got, c.want)
+			}
+		})
+	}
+}
+
+// 整份清单用相对地址时，-check-urls 必须真的能下载核对（而不是默默跳过）。
+func TestVerifyURLsRelative(t *testing.T) {
+	payload := []byte("relative plugin bytes")
+	sha := digestOf(t, payload)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "demo-windows-amd64.exe") || strings.HasSuffix(r.URL.Path, "demo-windows-arm64.exe") {
+			_, _ = w.Write(payload)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	doc := fmt.Sprintf(`
+schema: 1
+plugins:
+  - id: demo
+    version: 1.0.0
+    packages:
+      windows/amd64:
+        url: ./demo-windows-amd64.exe
+        sha256: "%s"
+      windows/arm64:
+        url: ./demo-windows-arm64.exe
+        sha256: "%s"
+`, sha, sha)
+	feed, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+
+	if err := feed.VerifyURLs(context.Background(), srv.Client(), srv.URL+"/feed.yaml"); err != nil {
+		t.Fatalf("相对地址应能解析并核对: %v", err)
+	}
+
+	if err := feed.VerifyURLs(context.Background(), srv.Client(), ""); err == nil {
+		t.Fatal("不给清单位置时应当报错，而不是默默跳过")
+	} else if !strings.Contains(err.Error(), "-feed-url") {
+		t.Fatalf("错误信息应告诉用户怎么补: %v", err)
 	}
 }
 

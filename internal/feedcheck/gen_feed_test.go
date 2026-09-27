@@ -166,6 +166,92 @@ func TestGenFeedScriptProducesValidFeed(t *testing.T) {
 	}
 }
 
+// 相对地址形态（--relative）：清单里写 ./<文件>，由宿主相对订阅地址解析。
+//
+// 这是官方源的默认写法：内置订阅地址是 .../releases/latest/download/feed.yaml，
+// 于是相对地址正好落在同一次发布的产物上 —— 同源，用户不必额外确认下载域名，也不会
+// 因为发新版本而让已发的清单指向别处。
+func TestGenFeedScriptRelativeURLs(t *testing.T) {
+	bash, script := requireBashAndScript(t)
+
+	dir := t.TempDir()
+	pluginsDir := filepath.Join(dir, "plugins")
+	payload := []byte("fake plugin binary")
+	writeArtifacts(t, pluginsDir, payload,
+		"upkit-hub-windows-amd64.exe",
+		"upkit-hub-windows-arm64.exe",
+	)
+
+	out := filepath.Join(dir, "feed.yaml")
+	runGenFeed(t, bash, script,
+		"--plugins-dir", pluginsDir,
+		"--version", "0.2.0",
+		"--relative",
+		"-o", out,
+	)
+
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("读生成结果: %v", err)
+	}
+	feed, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("生成的清单无法解析: %v\n%s", err, raw)
+	}
+	if err := feed.ValidateAllPlatforms("0.2.0"); err != nil {
+		t.Fatalf("校验失败: %v", err)
+	}
+
+	// 内置订阅地址：相对地址必须解析到同一次发布里的产物。
+	const feedURL = "https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml"
+	for _, platform := range SupportedPlatforms() {
+		pkg := feed.Plugins[0].Packages[platform]
+		if pkg.URL != "./"+ArtifactName("upkit-hub", platform) {
+			t.Errorf("%s 的地址应是相对形式，实际 %q", platform, pkg.URL)
+		}
+		abs, err := ResolveURL(feedURL, pkg.URL)
+		if err != nil {
+			t.Fatalf("%s 的相对地址解析失败: %v", platform, err)
+		}
+		want := "https://github.com/dezhishen/upkit-hub/releases/latest/download/" + ArtifactName("upkit-hub", platform)
+		if abs != want {
+			t.Errorf("%s 解析为 %s，期望 %s", platform, abs, want)
+		}
+	}
+
+	if err := feed.CheckArtifacts(pluginsDir); err != nil {
+		t.Fatalf("清单与产物不一致: %v", err)
+	}
+}
+
+// 地址形态必须恰好给一个：两个都给（写法含糊）或都不给（生成不出 url）都应当报错，
+// 而不是猜一个。
+func TestGenFeedScriptRequiresOneURLMode(t *testing.T) {
+	bash, script := requireBashAndScript(t)
+
+	dir := t.TempDir()
+	pluginsDir := filepath.Join(dir, "plugins")
+	writeArtifacts(t, pluginsDir, []byte("x"),
+		"upkit-hub-windows-amd64.exe", "upkit-hub-windows-arm64.exe")
+
+	base := []string{script,
+		"--plugins-dir", pluginsDir,
+		"--version", "0.2.0",
+		"-o", filepath.Join(dir, "feed.yaml"),
+	}
+
+	if out, err := exec.Command(bash, base...).CombinedOutput(); err == nil {
+		t.Fatalf("既不给 --relative 也不给 --base-url 时应当失败:\n%s", out)
+	}
+
+	both := append(append([]string{}, base...), "--relative", "--base-url", "https://example.com/dl")
+	if out, err := exec.Command(bash, both...).CombinedOutput(); err == nil {
+		t.Fatalf("两种地址形态同时给时应当失败:\n%s", out)
+	} else if !strings.Contains(string(out), "只能给一个") {
+		t.Errorf("错误信息应说明两者互斥:\n%s", out)
+	}
+}
+
 // 漏发一个架构的产物，对应架构的用户会在「校验订阅」时失败 —— 发布前就该拦住。
 func TestGenFeedScriptRejectsIncompletePlatformCoverage(t *testing.T) {
 	bash, script := requireBashAndScript(t)
