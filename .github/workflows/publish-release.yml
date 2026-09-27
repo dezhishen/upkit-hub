@@ -143,8 +143,9 @@ jobs:
             gh release edit "$VERSION" "${notes_args[@]}"
           else
             create_args=("$VERSION" --title "$VERSION" --verify-tag "${notes_args[@]}")
-            # 注意不能写成 `[[ ... ]] && create_args+=(...)`：条件为假时整条语句
-            # 返回非 0，在 set -e 下会让这一步直接结束。
+            # 用 if 而不是 `[[ ... ]] && create_args+=(...)`：后者条件为假时整条语句
+            # 返回非 0；虽然 bash 的 errexit 豁免了 && 列表里非末尾的命令（实测不会
+            # 在这里退出），但把这种语句放在函数末尾时返回值会变成非 0，容易踩。
             if [[ "$PRERELEASE" == "true" ]]; then
               create_args+=(--prerelease)
             fi
@@ -176,16 +177,28 @@ jobs:
             fi
 
             # 清单里的产物地址是相对的（./<文件>），由宿主相对订阅地址解析 —— 也就是说
-            # 用户实际取的是 .../releases/latest/download/<插件>.exe。这条路必须真的通，
-            # 否则「装得上」只存在于我们的想象里。用 Range 只取第一个字节，不下载整个包。
+            # 用户实际取的是 .../releases/latest/download/<插件>.exe（GitHub 会 302 到
+            # release-assets.githubusercontent.com，宿主跟跳转后按 sha256 校验）。
+            #
+            # 这里按**本次 tag** 的地址取第一个字节（Range），确认附件真的可下载：
+            # 用 tag 而不是 latest，是因为 latest 在刚发布时可能还在指向上一版 ——
+            # 而两版附件**同名**，那会让这个检查看着通过、实际验的是旧的字节。
+            # 「latest 指向本次发布」已由上面的 API 断言负责。
             for asset in upkit-hub-windows-amd64.exe upkit-hub-windows-arm64.exe; do
-              url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/${asset}"
-              code="$(curl -sSL -o /dev/null -w '%{http_code}' --range 0-0 --max-time 120 "$url" || true)"
+              url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${asset}"
+              code=""
+              for attempt in 1 2 3 4 5; do
+                code="$(curl -sSL -o /dev/null -w '%{http_code}' --range 0-0 --max-time 120 "$url" || true)"
+                [[ "$code" == "200" || "$code" == "206" ]] && break
+                # 刚创建的 Release，附件可能要几秒才可下载。
+                echo "第 ${attempt} 次取到 HTTP ${code}，5 秒后重试"
+                sleep 5
+              done
               if [[ "$code" != "200" && "$code" != "206" ]]; then
                 echo "::error::${url} 返回 HTTP ${code}；清单里的相对地址会解析到这里，用户会下不到产物"
                 exit 1
               fi
-              echo "相对地址解析验证通过：${url} -> HTTP ${code}"
+              echo "附件可下载：${url} -> HTTP ${code}"
             done
           fi
 
