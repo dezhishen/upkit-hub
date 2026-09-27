@@ -80,13 +80,18 @@ test: ## 运行单元测试（含发布脚本的测试）
 tidy: ## 整理 go.mod / go.sum
 	$(GO) mod tidy
 
+digests: ## 生成构建期摘要表（把需要它的产物下载一遍，实测 sha256）
+	bash scripts/gen-digests.sh
+
 plugins: ## 交叉编译两个架构的插件产物到 dist/plugins
 	@for target in $(PLATFORMS); do \
 		bash scripts/build-plugin.sh --release-name -v "$(PLUGIN_VERSION)" \
 			-t "$$target" $(PLUGIN_PACKAGE) || exit 1; \
 	done
 
-feed: plugins ## 组装 dist/release/ 并生成清单 feed.yaml（SCHEMA=2 时写入域名声明）
+# feed 依赖 digests：摘要表是**编进插件**的（go:embed），所以必须先算表再编译，
+# 否则发出去的插件里带着上一版的摘要。
+feed: digests plugins ## 组装 dist/release/ 并生成清单 feed.yaml（SCHEMA=2 时写入域名声明）
 	@rm -rf $(RELEASE_DIR)
 	@mkdir -p $(RELEASE_DIR)
 	@cp $(PLUGINS_DIR)/*.exe $(RELEASE_DIR)/
@@ -120,6 +125,7 @@ clean: ## 清理构建产物
 help: ## 显示本帮助
 	@echo "可用目标："
 	@echo "  check          格式化 + 文件头 + vet + 测试"
+	@echo "  digests        生成构建期摘要表（下载产物实测 sha256）"
 	@echo "  plugins        构建两个架构的插件产物"
 	@echo "  feed           生成 dist/release/feed.yaml（SCHEMA=2 时带域名声明）"
 	@echo "  release-local  plugins + feed + 校验"

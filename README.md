@@ -97,6 +97,8 @@ https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
 ├── cmd/upkit-hub/          官方插件（catalog 模式：一条订阅分发多个软件）
 │   ├── catalog.go          软件清单：加一个软件 = 加一条 appSpec
 │   ├── audit.go            盘点下载导航站上的软件能不能接（-audit-software-hub）
+│   ├── pinned_digests.go   构建期摘要表：给那些自己不发校验文件的上游
+│   ├── pinned_digests.json 摘要表本体（由 scripts/gen-digests.sh 生成）
 │   ├── source_github.go    上游之一：GitHub Releases
 │   ├── source_softwarehub.go 上游之二：下载导航站（版本）+ 官方校验文件（摘要）
 │   ├── source_ucbinaries.go 上游之三：ungoogled-chromium 官方二进制索引站
@@ -107,6 +109,7 @@ https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
 ├── internal/ucbinaries/    ungoogled-chromium 索引站的 HTML 解析（带真实页面夹具）
 ├── scripts/
 │   ├── build-plugin.sh     插件构建（交叉编译、注入版本号、发布命名）
+│   ├── gen-digests.sh      生成构建期摘要表（下载产物、实测 sha256）
 │   ├── gen-feed.sh         清单生成器（扫描产物、现算摘要、检查平台覆盖）
 │   ├── serve-feed.sh       本地 https 静态服务（自签证书，免 root）
 │   └── check-headers.sh    文件头检查（package 唯一、//go:build 在第 1 行）
@@ -127,14 +130,21 @@ https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
 | `7zip` | `ip7z/7zip` 的 Releases | `7z*-<arch>.exe`（官方安装器，静默安装） |
 | `vscode` | Microsoft 官方更新接口 | `win32-<arch>-archive`（免安装 zip） |
 | `libreoffice` | [下载导航站](https://github.com/dezhishen/original-software-hub)给版本，产物与校验文件来自 TDF 官方镜像 | `LibreOffice_<版本>_Win_<arch>.msi`（官方 MSI 静默安装） |
+| `git` | Git for Windows 官方 Releases | `PortableGit-*-<arch>.7z.exe`（官方自解压便携版） |
+| `easytier` | EasyTier 官方 Releases | `easytier-windows-<arch>-v*.zip`（官方便携 zip） |
+| `firefox` | Mozilla 官方 CDN | `Firefox Setup <版本>.msi`（官方 MSI 静默安装） |
+| `thunderbird` | Mozilla 官方 CDN | `Thunderbird Setup <版本>.msi`（官方 MSI 静默安装） |
+| `weixin` | 导航站给版本，产物来自腾讯官方 CDN | `WeChatWin_<版本>.exe`（官方 NSIS 安装器，静默装到指定目录） |
+| `baidunetdisk` | 导航站给版本，产物来自百度官方 CDN | `BaiduNetdisk_<版本>.exe`（官方 NSIS 安装器，静默装到指定目录） |
 
 `ungoogled-chromium` 的二进制由社区贡献者提交、**不是官方构建**，也无法保证可复现 ——
 索引站首页自己就这么写。这段说明会作为版本备注出现在界面上，并且每个文件都带上站点给的
 SHA256。
 
-`libreoffice` 是有意用 MSI 装的少数几个：它只有安装器形态（没有官方便携包），所以它是
-**系统级安装、需要管理员权限、无法自动回滚**的 —— 这三点都写进了软件说明，用户点安装前
-就能看到。其余软件优先选便携版。
+`libreoffice` / `firefox` / `thunderbird` 是有意用 MSI 装的：它们只有安装器形态（没有
+官方便携包），而且是 **系统级安装、需要管理员权限、无法自动回滚** 的 —— 这三点都写进
+了软件说明，用户点安装前就能看到。`weixin` / `baidunetdisk` 同理（官方 NSIS 安装器，
+静默装到 upkit 指定的目录）。其余软件优先选便携版。
 
 ## 增加一个软件
 
@@ -146,12 +156,12 @@ SHA256。
 
 | `src` | 怎么拿版本与产物 |
 | --- | --- |
-| `githubReleases{repo, asset}` | 查 GitHub Releases，按 `asset` 通配挑包；`{arch}` 会按本机架构展开 |
+| `githubReleases{repo, asset, stableOnly}` | 查 GitHub Releases，按 `asset` 通配挑包；`{arch}` 会按本机架构展开；`stableOnly` 丢掉预发布 |
 | `ucBinaries{platformDirs}` | 读索引站的平台索引页与版本页，挑出便携 zip 及其 SHA256 |
-| `softwareHub{siteID, origin, urlTemplate, arch}` | 从下载导航站拿版本，产物地址按官方命名规则合成，摘要由 `digest` 从官方渠道取（见下一节） |
+| `softwareHub{siteID, origin, urlTemplate, arch, digest}` | 从下载导航站拿版本，产物地址按官方命名规则合成，摘要由 `digest` 从官方渠道取（见下一节） |
 | `vscodeUpdate{products}` | 查官方更新接口，一次拿到版本、摘要与由版本号决定的不可变地址 |
 
-四条容易踩的坑：
+五条容易踩的坑：
 
 - **产物必须按本机架构挑**。宿主只用 `Artifacts[0]`，挑错了没有第二次机会。插件是按架构
   分别构建的（订阅里同时有 windows/amd64 与 windows/arm64 两份），所以用 `runtime.GOARCH`；
@@ -161,6 +171,10 @@ SHA256。
   `PickPortable` 因此宁可不提供某个版本，也不给一个无法校验的下载。
 - **地址必须不可变**。带版本号的地址才能固定摘要；「永远指最新」的转发地址上，摘要今天
   对、明天就错了，所以那种软件要么换官方接口（`vscode` 就是这么做的），要么不接。
+- **安装器要写清楚怎么静默装**。`appSpec.methodOpts` 交给宿主三条轴的选项：NSIS 是
+  `/S` + `/D={target}`（`/D` 必须是最后一个参数且不带引号）、Inno 是 `/VERYSILENT` +
+  `/DIR={target}`、MSI 是 `/qn`。不写就会弹出厂商自己的安装向导，那和用户自己去官网
+  下载没有区别。
 
 `cmd/upkit-hub/catalog_test.go` 里有几条约束性用例：id 必须合法且唯一、必须声明入口与
 安装路径、`{arch}` 必须按上游命名展开。加软件时它们会替你挡住最低级的错误。
@@ -179,8 +193,8 @@ UPKIT_HUB_LIVE=1 go test ./internal/ucbinaries/ ./cmd/upkit-hub/ -run Live -v
 
 | 它给的 | 它没给的 | 我们怎么补 |
 | --- | --- | --- |
-| 版本号、官方入口、主页与简介 | 摘要（一个都没有） | 在 `src.digest` 里声明摘要来源（`sha256Sidecar` 读同目录的 `.sha256`）；取不到摘要就不发布产物 |
-| 平台与架构、直链文件 | 不可变地址（很多是「永远指最新」的转发，路径里还常常多一层镜像自己的目录） | 在 `src.origin` + `src.urlTemplate` 里按官方命名规则写死地址，站点的文件名拿来做交叉校验 |
+| 版本号、官方入口、主页与简介 | 摘要（一个都没有） | 在 `src.digest` 里声明摘要来源：`sha256Sidecar` 读同目录的 `.sha256`、`sha256Sums` 读每版一份的校验清单（Mozilla）、`pinnedDigest` 读**发布前实测的摘要表**；取不到就不发布产物 |
+| 平台与架构、直链文件 | 不可变地址（很多是「永远指最新」的转发，路径里还常常多一层镜像自己的目录） | 在 `src.origin` + `src.urlTemplate` 里按官方命名规则写死地址，站点的文件名拿来做交叉校验；路径里带内容哈希、日期这类合成不出来的片段时（QQ、钉钉的 CDN），就声明 `downloadHost` 照站点地址下载，并在运行时核对域名 |
 
 先跑盘点，看哪些软件够得着：
 
@@ -195,7 +209,39 @@ go run ./cmd/upkit-hub -audit-software-hub
 | 只有网页/商店入口 | 39 | 站点记的「下载入口」是官网页面或应用商店，没有可下载的文件，接不了 |
 | 版本是占位值 | 14 | 版本字段的原文是 `latest`（意思是「地址永远指最新」），没法用来判断该不该升级，接不了 |
 | 待补安装契约 | 19 | 版本与直链都在，但要逐个核实静默参数 / 安装目录 / 入口可执行文件 / 进程名才能接 |
-| 已接入 | 3 | `7zip`、`vscode`、`libreoffice` |
+| 已接入 | 9 | `7zip`、`vscode`、`libreoffice`、`git`、`easytier`、`firefox`、`thunderbird`、`weixin`、`baidunetdisk` |
+
+### 发布前实测的摘要表
+
+微信、百度网盘这类上游**自己不发校验文件**（`.sha256` 那条路也走不通：ToDesk 对未知路径
+返回的是反爬页面），而本仓库的规矩是「没有摘要就不发布产物」。所以有了
+`cmd/upkit-hub/pinned_digests.json`：
+
+```bash
+make digests          # 等价于 bash scripts/gen-digests.sh
+```
+
+它让插件自己列出「哪些产物需要构建期摘要」（`-list-pinned-artifacts`，地址怎么拼、当前
+是哪个版本都写在 catalog 里），脚本再把产物下载一遍、算出 sha256 与大小，写进表里，
+**随插件一起发出去**（`go:embed`）。用户在装的时候仍然逐字节校验，只是摘要由我们在发布时
+实测。缓存按「地址 + 版本」记账（`~/.cache/upkit-hub/digests`），版本没变就不重复下载。
+
+代价说清楚：表是按**地址**记的，所以只对「地址里带版本号」的软件有效。上游发新版 → 地址
+变了 → 表里没有 → 那个版本在旧插件里看不到，直到重新生成表、重新发版。`gen-digests.sh`
+在摘要表生成不出来时**宁可失败**（少一条摘要就等于那个软件装不了）。
+
+### 为什么有些软件不接
+
+不是实现偷懒，是接不了或不该接：
+
+| 软件 | 卡在哪 |
+| --- | --- |
+| QQ | 官方 CDN 对非浏览器客户端直接返回 403，upkit 下不动 |
+| ToDesk | 直链对非浏览器客户端返回反爬页面（200 + HTML），下到的不是安装包 |
+| 钉钉 | 安装器是「PE + 7z 载荷 + setup.xml」的自定义形态，静默方式没有公开依据 |
+| 火绒 / 腾讯会议 | NSIS 但安装逻辑交给自定义 helper：火绒要装内核驱动、腾讯会议先解到临时目录再由 helper 接管 |
+| WPS / 向日葵 / WinRAR / Notepad++ / Adobe 全家 / Office / AutoCAD … | 站点里只有官网页面或商店入口，没有可下载的文件 |
+| Chrome / Edge / AnyDesk / Evernote | 直链是「永远指最新」的转发地址，没法固定摘要（Edge 的官方接口能拿到版本与摘要，但它的 MSI 固定装到 `Program Files (x86)`，宿主目前没有表达这个路径的变量） |
 
 `vscode` 在站点里也有，但上游用的是微软官方更新接口：站点给它的地址是滚动地址、也没有
 摘要，而官方接口一次就能给出版本、内容摘要和一个由版本号决定的不可变地址。

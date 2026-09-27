@@ -20,6 +20,9 @@ import (
 type githubReleases struct {
 	repo  string // owner/name
 	asset string
+	// stableOnly 为真时丢掉预发布：有些仓库（Git for Windows）的 RC 比正式版还
+	// 频繁，而宿主默认拿列表里的第一条 —— 不挡掉，用户点下去装的就是 RC。
+	stableOnly bool
 }
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
@@ -29,8 +32,17 @@ func (s githubReleases) versions(ctx context.Context, cfg plugin.AppConfig, spec
 	if limit <= 0 || limit > 30 {
 		limit = 10
 	}
+	// 只要正式版时多要一些：Git for Windows 的 RC 比正式版还密集，按 limit 条去问，
+	// 很可能一条正式版都翻不到（结果就是「查不到版本」）。
+	fetch := limit
+	if s.stableOnly {
+		fetch = limit * 4
+		if fetch > 60 {
+			fetch = 60
+		}
+	}
 	pattern := assetPattern(s.asset, spec.archToken())
-	api := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=%d", s.repo, limit)
+	api := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=%d", s.repo, fetch)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
 	if err != nil {
 		return nil, err
@@ -75,6 +87,9 @@ func (s githubReleases) versions(ctx context.Context, cfg plugin.AppConfig, spec
 		if r.Draft {
 			continue
 		}
+		if s.stableOnly && r.Prerelease {
+			continue
+		}
 		arts := make([]plugin.Artifact, 0, len(r.Assets))
 		for _, a := range r.Assets {
 			if !strings.HasSuffix(strings.ToLower(a.Name), ".zip") && !strings.HasSuffix(strings.ToLower(a.Name), ".exe") {
@@ -105,6 +120,10 @@ func (s githubReleases) versions(ctx context.Context, cfg plugin.AppConfig, spec
 	if len(out) == 0 {
 		return nil, fmt.Errorf("%w: %s 最近的发布里没有匹配 %q 的产物（检查资产名通配或平台）",
 			plugin.ErrNotFound, s.repo, pattern)
+	}
+	// 多要的那几条只是为了穿过预发布；按调用方要的条数返回。
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	cfg.Log.Info("查询完成", "app", spec.id, "releases", len(out), "latest", out[0].Version)
 	return out, nil

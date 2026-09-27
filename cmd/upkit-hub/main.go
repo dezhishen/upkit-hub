@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/dezhishen/upkit/pkg/plugin"
 )
@@ -31,6 +32,26 @@ func (a *hubApp) Versions(ctx context.Context, req plugin.VersionsRequest) ([]pl
 	return a.spec.src.versions(ctx, a.cfg, a.spec, req.Limit)
 }
 
+// optionsOf 把目录里的选项表转成宿主认的 Options。
+//
+// 键先排序：同一份目录每次注册出来的选项顺序要一致，否则宿主侧的配置比对会看到无谓的
+// 顺序差异。
+func optionsOf(m map[string]string) plugin.Options {
+	if len(m) == 0 {
+		return plugin.Options{}
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	kv := make([]string, 0, len(keys)*2)
+	for _, k := range keys {
+		kv = append(kv, k, m[k])
+	}
+	return plugin.NewOptions(kv...)
+}
+
 func main() {
 	// 清单生成需要知道「这个插件声明哪些域名」，而声明的唯一事实来源是 catalog。
 	// 所以让插件自己把它打印出来，供 scripts/gen-feed.sh 直接接在参数后面（见
@@ -50,6 +71,16 @@ func main() {
 		return
 	}
 
+	// 导出「需要在构建期算摘要的产物」：scripts/gen-digests.sh 拿它去下载并实测 sha256。
+	// 自己不发校验文件的上游（微信、QQ 这类）全靠这张表。
+	if len(os.Args) > 1 && (os.Args[1] == "-list-pinned-artifacts" || os.Args[1] == "--list-pinned-artifacts") {
+		if err := listPinnedArtifacts(os.Stdout, ""); err != nil {
+			fmt.Fprintln(os.Stderr, "导出失败:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	regs := make([]plugin.Registration, 0, len(catalog))
 	for _, item := range catalog {
 		spec := item
@@ -62,8 +93,11 @@ func main() {
 			// 软身份：用上游项目标识，便于宿主跨来源去重。
 			plugin.WithProvides(spec.provides...),
 			plugin.WithDefaults(plugin.Defaults{
-				Method: spec.method,
-				Unpack: spec.unpack,
+				Method:        spec.method,
+				Unpack:        spec.unpack,
+				MethodOptions: optionsOf(spec.methodOpts),
+				UnpackOptions: optionsOf(spec.unpackOpts),
+				SourceOptions: optionsOf(spec.sourceOpts),
 				Install: plugin.InstallDefaults{
 					Path:        spec.installPath,
 					Entrypoints: spec.entry,

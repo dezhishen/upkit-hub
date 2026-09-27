@@ -46,6 +46,15 @@ type appSpec struct {
 	installPath string
 	entry       []string
 	processes   []string
+
+	// methodOpts / unpackOpts / sourceOpts 是三条轴的额外选项，原样交给宿主。
+	//
+	// 安装器类软件全靠它：大多数安装器要显式告诉它「静默」与「装到哪」
+	// （NSIS 是 /S /D=目录，Inno 是 /VERYSILENT /DIR=目录，MSI 是 /qn），不写就只能
+	// 弹出厂商自己的安装向导 —— 那与用户自己去官网下载没有区别。
+	methodOpts map[string]string
+	unpackOpts map[string]string
+	sourceOpts map[string]string
 }
 
 // archToken 返回本机架构在上游命名里的片段。
@@ -152,6 +161,144 @@ var catalog = []appSpec{
 		installPath: "${PROGRAMFILES}/LibreOffice",
 		entry:       []string{"program/soffice.exe"},
 		processes:   []string{"soffice.exe", "soffice.bin"},
+	},
+	{
+		id:          "git",
+		name:        "Git",
+		desc:        "版本控制（官方便携版，自解压到安装目录，不改注册表）",
+		homepage:    "https://gitforwindows.org/",
+		provides:    []string{"git-for-windows/git"},
+		src:         githubReleases{repo: "git-for-windows/git", asset: "PortableGit-*-{arch}.7z.exe", stableOnly: true},
+		arch:        map[string]string{"amd64": "64-bit", "arm64": "arm64"},
+		unpack:      "raw",
+		method:      "exe-installer",
+		installPath: "${ROOT}/Git",
+		entry:       []string{"cmd/git.exe"},
+		processes:   []string{"git.exe"},
+		// 官方便携版是一个 7z 自解压包：`-o<目录>` 指定解到哪、`-y` 表示不问。
+		// 这条命令由 7-Zip 自解压模块负责，不经过任何安装向导，也不碰注册表。
+		methodOpts: map[string]string{
+			"args":        "-o{target},-y",
+			"custom_path": "true",
+		},
+	},
+	{
+		id:          "easytier",
+		name:        "EasyTier",
+		desc:        "去中心化组网（官方便携版：easytier-core / easytier-cli；官方 GUI 只有安装器形态，未含）",
+		homepage:    "https://github.com/EasyTier/EasyTier",
+		provides:    []string{"EasyTier/EasyTier"},
+		src:         githubReleases{repo: "EasyTier/EasyTier", asset: "easytier-windows-{arch}-v*.zip"},
+		arch:        map[string]string{"amd64": "x86_64", "arm64": "arm64"},
+		unpack:      "zip",
+		method:      "portable-inplace",
+		installPath: "${ROOT}/EasyTier",
+		entry:       []string{"easytier-core.exe", "easytier-cli.exe"},
+		processes:   []string{"easytier-core.exe"},
+		// 官方 zip 里有一层包装目录（easytier-windows-x86_64/），去掉它再落地。
+		unpackOpts: map[string]string{"strip": "1"},
+	},
+	{
+		id:       "firefox",
+		name:     "Mozilla Firefox",
+		desc:     "浏览器（官方 MSI 静默安装：系统级、需要管理员权限、不能自动回滚）",
+		homepage: "https://www.mozilla.org/firefox/",
+		provides: []string{"mozilla/firefox"},
+		// 站点给的地址是「永远指最新」的转发（?product=firefox-latest-ssl），
+		// 摘要也无从取得；官方其实有带版本号的固定地址与每版一份的 SHA256SUMS，
+		// 所以地址按官方命名规则合成，摘要去清单里取。
+		//
+		// 语言固定 zh-CN：中文用户是这里的主要用户，而清单里中文与英文产物都在，
+		// 换语言要连带换校验清单里的路径，不如写死。
+		src: softwareHub{
+			siteID:      "firefox",
+			origin:      "https://download-installer.cdn.mozilla.net",
+			urlTemplate: "/pub/firefox/releases/{version}/{archDir}/zh-CN/Firefox%20Setup%20{version}.msi",
+			arch:        map[string]archNames{"amd64": {dir: "win64", file: "win64"}, "arm64": {dir: "win64", file: "win64"}},
+			digest:      sha256Sums{urlTemplate: "https://ftp.mozilla.org/pub/firefox/releases/{version}/SHA256SUMS"},
+		},
+		unpack:      "raw",
+		method:      "msiexec",
+		installPath: "${PROGRAMFILES}/Mozilla Firefox",
+		entry:       []string{"firefox.exe"},
+		processes:   []string{"firefox.exe"},
+	},
+	{
+		id:       "thunderbird",
+		name:     "Mozilla Thunderbird",
+		desc:     "邮件客户端（官方 MSI 静默安装：系统级、需要管理员权限、不能自动回滚）",
+		homepage: "https://www.thunderbird.net/",
+		provides: []string{"mozilla/thunderbird"},
+		src: softwareHub{
+			siteID:      "thunderbird",
+			origin:      "https://download-installer.cdn.mozilla.net",
+			urlTemplate: "/pub/thunderbird/releases/{version}/{archDir}/zh-CN/Thunderbird%20Setup%20{version}.msi",
+			arch:        map[string]archNames{"amd64": {dir: "win64", file: "win64"}},
+			digest:      sha256Sums{urlTemplate: "https://ftp.mozilla.org/pub/thunderbird/releases/{version}/SHA256SUMS"},
+		},
+		unpack:      "raw",
+		method:      "msiexec",
+		installPath: "${PROGRAMFILES}/Mozilla Thunderbird",
+		entry:       []string{"thunderbird.exe"},
+		processes:   []string{"thunderbird.exe"},
+	},
+	{
+		id:       "weixin",
+		name:     "微信",
+		desc:     "即时通讯（官方安装包静默安装到指定目录，需要管理员权限；不含聊天记录迁移）",
+		homepage: "https://weixin.qq.com/",
+		provides: []string{"tencent/wechat"},
+		// 站点的 x64 地址带版本号（WeChatWin_4.1.15.exe），x86 那条是「永远指最新」，
+		// 所以只接 x64；arm64 的机器回退到 x64 包（Windows 11 ARM 跑得起来）。
+		//
+		// 上游不发校验文件，摘要由 scripts/gen-digests.sh 在发布前实测（pinnedDigest）。
+		src: softwareHub{
+			siteID:      "weixin",
+			origin:      "https://dldir1v6.qq.com",
+			urlTemplate: "/weixin/Universal/Windows/WeChatWin_{version}.exe",
+			arch:        map[string]archNames{"amd64": {}},
+			digest:      pinnedDigest{},
+		},
+		unpack:      "raw",
+		method:      "exe-installer",
+		installPath: "${ROOT}/WeChat",
+		entry:       []string{"Weixin.exe", "WeChat.exe"},
+		processes:   []string{"Weixin.exe", "WeChat.exe"},
+		// 官方安装器是 NSIS（安装器里带着 nsis7z 插件，由脚本自己把载荷解到 $INSTDIR），
+		// 所以 /S（静默）与 /D（装到哪）都是 NSIS 的标准行为。/D 必须是最后一个参数，
+		// 且按 NSIS 的规定不带引号 —— 安装目录里因此不能有空格。
+		methodOpts: map[string]string{
+			"args":            "/S,/D={target}",
+			"custom_path":     "true",
+			"elevate":         "true",
+			"timeout_seconds": "1800",
+		},
+	},
+	{
+		id:       "baidunetdisk",
+		name:     "百度网盘",
+		desc:     "网盘客户端（官方安装包静默安装到指定目录，需要管理员权限）",
+		homepage: "https://pan.baidu.com/download",
+		provides: []string{"baidu/baidunetdisk"},
+		// 站点给的 x86 那条指向的是另一个旧版本（7.12.3.5），所以只接 x64。
+		src: softwareHub{
+			siteID:      "baidunetdisk",
+			origin:      "https://issuepcdn.baidupcs.com",
+			urlTemplate: "/issue/netdisk/yunguanjia/BaiduNetdisk_{version}.exe",
+			arch:        map[string]archNames{"amd64": {}},
+			digest:      pinnedDigest{},
+		},
+		unpack:      "raw",
+		method:      "exe-installer",
+		installPath: "${ROOT}/BaiduNetdisk",
+		entry:       []string{"BaiduNetdisk.exe"},
+		processes:   []string{"BaiduNetdisk.exe"},
+		methodOpts: map[string]string{
+			"args":            "/S,/D={target}",
+			"custom_path":     "true",
+			"elevate":         "true",
+			"timeout_seconds": "1800",
+		},
 	},
 }
 

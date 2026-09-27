@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/dezhishen/upkit-hub/internal/feedcheck"
+	"github.com/dezhishen/upkit-hub/internal/softwarehub"
 	"github.com/dezhishen/upkit/pkg/plugin"
 )
 
@@ -206,6 +207,64 @@ func TestLiveCatalogSources(t *testing.T) {
 				t.Errorf("%s v%s: 摘要格式不对: %q", spec.id, rel.Version, art.Digest)
 			}
 			t.Logf("%s v%s -> %s（%s…）", spec.id, rel.Version, art.Name, art.Digest[:22])
+		}
+	}
+}
+
+// 构建期摘要表必须覆盖每个用它做摘要来源的软件：漏一条，那个软件在用户那边就会
+// 「查得到版本却装不了」。这条要联网（清单里的地址来自站点上的当前版本）。
+//
+//	UPKIT_HUB_LIVE=1 go test ./cmd/upkit-hub -run Live -v
+func TestLivePinnedDigestsCoverCatalog(t *testing.T) {
+	if os.Getenv("UPKIT_HUB_LIVE") == "" {
+		t.Skip("设置 UPKIT_HUB_LIVE=1 才跑联网用例")
+	}
+	table, err := pinnedTable()
+	if err != nil {
+		t.Fatalf("读取构建期摘要表失败: %v", err)
+	}
+	if len(table) == 0 {
+		t.Skip("摘要表还是空的，先跑 scripts/gen-digests.sh")
+	}
+	client := &softwarehub.Client{}
+	for _, spec := range catalog {
+		src, ok := spec.src.(softwareHub)
+		if !ok {
+			continue
+		}
+		if _, ok := src.digest.(pinnedDigest); !ok {
+			continue
+		}
+		payload, err := client.Versions(context.Background(), src.siteID)
+		if err != nil {
+			t.Errorf("%s: 读站点数据失败: %v", spec.id, err)
+			continue
+		}
+		arches := make([]string, 0, len(src.arch))
+		for arch := range src.arch {
+			arches = append(arches, arch)
+		}
+		sort.Strings(arches)
+		for _, arch := range arches {
+			pick, err := payload.Pick(arch)
+			if err != nil {
+				t.Errorf("%s/%s: %v", spec.id, arch, err)
+				continue
+			}
+			names, _, ok := src.pickArch(arch)
+			if !ok {
+				t.Errorf("%s/%s: 没有架构命名片段", spec.id, arch)
+				continue
+			}
+			rawURL, err := src.artifactURL(pick, names)
+			if err != nil {
+				t.Errorf("%s/%s: %v", spec.id, arch, err)
+				continue
+			}
+			if _, ok := table[rawURL]; !ok {
+				t.Errorf("%s/%s 的产物（v%s）不在构建期摘要表里：需要重新生成摘要表；%s",
+					spec.id, arch, pick.Version, rawURL)
+			}
 		}
 	}
 }

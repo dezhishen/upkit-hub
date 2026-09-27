@@ -79,6 +79,14 @@ jobs:
           fi
           echo "version=${version}" >>"$GITHUB_OUTPUT"
 
+      - name: 生成构建期摘要表（把需要它的产物下载一遍，实测 sha256）
+        run: |
+          set -euo pipefail
+          # 摘要表是编进插件的（go:embed），所以必须在构建之前生成。
+          # 这些上游（微信、百度网盘这类）自己不发校验文件，摘要只能由我们在
+          # 发布前把产物下下来实测 —— 用户那边仍然逐字节校验。
+          bash scripts/gen-digests.sh
+
       - name: 构建 windows/amd64 与 windows/arm64
         env:
           PLUGIN_VERSION: ${{ steps.ver.outputs.version }}
