@@ -7,6 +7,39 @@ upkit 主仓库只做平台本体，另外把一个订阅地址编进二进制�
 插件发布严格对应 —— 留在主仓库会跟代码提交搅在一起被顺手改掉，让已发布版本的行为
 跟着漂移。
 
+## 两层结构（先分清这个）
+
+这个仓库发布的东西分两层，**两层的机制完全不同**；混在一起看很容易绕晕：
+
+```
+   订阅地址（编在 upkit 二进制里，改不了）
+   https://github.com/dezhishen/upkit-hub/releases/latest/download/feed.yaml
+                          │
+   第 1 层：插件包          │  清单只列「插件」本身：upkit-hub-windows-<arch>.exe
+                          ▼
+   feed.yaml ──► upkit 的订阅路径：域名授权 → 下载 → sha256 校验 → 落盘 plugin/
+                          │
+   第 2 层：软件包          │  upkit 启动插件子进程，问它：有哪些软件、哪些版本、下载什么
+                          ▼
+   插件的 Versions("ungoogled-chromium") ──► 上游（GitHub Releases / 索引站）的直链 + sha256
+                          │
+                          ▼
+   upkit 的四轴（下载 → 解包 → 落地 → 探测）把软件装到本机
+```
+
+|  | 第 1 层：插件包 | 第 2 层：软件包 |
+| --- | --- | --- |
+| 谁描述 | `feed.yaml`（本仓库由 `gen-feed.sh` 生成） | 插件的 `Versions()`（`cmd/upkit-hub/`） |
+| 什么时候确定 | 发布时写死 | 运行时向上游查询 |
+| 地址形态 | `./upkit-hub-windows-<arch>.exe`（相对订阅地址） | 上游给的绝对地址 |
+| 谁下载 | upkit 的订阅路径（`internal/pluginfeed`） | upkit 的四轴（`internal/engine`） |
+| 摘要谁校验 | upkit：与清单里的 sha256 强制比对，不一致即失败 | **目前不校验**插件给的 Digest（upkit 侧待补） |
+| 本仓库的相关代码 | `scripts/gen-feed.sh`、`internal/feedcheck`、CI | `cmd/upkit-hub/`、`internal/ucbinaries` |
+
+订阅装完之后还有一条信任链要走（都在 upkit 侧）：订阅功能开关 → 订阅域名（添加时确认）→
+下载域名（仅跨域绝对地址时需要）→ **插件 sha256 写进清单的 `sources[].trust`** —— 最后
+这一步没做，插件不会被启动（界面上会显示「未信任 · 需在清单里写入 sha256」）。
+
 ## 内置订阅地址
 
 ```
